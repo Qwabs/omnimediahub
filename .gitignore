@@ -12,7 +12,6 @@ dist
 dist-ssr
 dist-server
 *.local
-*.md
 
 
 # Editor directories and files
