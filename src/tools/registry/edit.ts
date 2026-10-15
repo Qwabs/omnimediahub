@@ -1,0 +1,155 @@
+import type { ToolDef } from './types'
+
+export const editTools: ToolDef[] = [
+  {
+    slug: 'round-corners',
+    category: 'edit',
+    title: 'Rounded corners',
+    description:
+      'Add rounded corners to images with per-corner control and a smooth (squircle) or circular curve — transparent PNG output, batch.',
+    engine: 'raster',
+    accepts: ['image/*'],
+    produces: 'PNG (transparent)',
+    controls: [
+      { kind: 'slider', id: 'radius', label: 'Radius (% of short side)', min: 1, max: 50, default: 12, unit: '%' },
+      {
+        kind: 'select',
+        id: 'curve',
+        label: 'Curve style',
+        options: [
+          { value: 'smooth', label: 'Squircle (continuous curve)' },
+          { value: 'circular', label: 'Circular' },
+        ],
+        default: 'smooth',
+      },
+      {
+        kind: 'select',
+        id: 'corners',
+        label: 'Corners',
+        options: [
+          { value: 'all', label: 'All four' },
+          { value: 'top', label: 'Top two' },
+          { value: 'bottom', label: 'Bottom two' },
+        ],
+        default: 'all',
+      },
+    ],
+    chainable: true,
+    status: 'live',
+    related: ['crop/circle-image-cropper', 'split-image'],
+  },
+  {
+    slug: 'pixelate-image',
+    category: 'edit',
+    title: 'Pixelate image',
+    description:
+      'Turn photos into pixel art or block out sensitive content — with retro palette presets. Batch, local, no upload.',
+    engine: 'raster',
+    accepts: ['image/*'],
+    produces: 'PNG',
+    controls: [
+      { kind: 'slider', id: 'block', label: 'Pixel block size', min: 2, max: 64, default: 8, unit: 'px' },
+      {
+        kind: 'select',
+        id: 'palette',
+        label: 'Palette',
+        options: [
+          { value: 'none', label: 'No palette (full colour)' },
+          { value: 'gameboy', label: 'Game Boy (4 shades)' },
+          { value: 'nes', label: 'NES (16 colours)' },
+          { value: 'c64', label: 'Commodore 64 (16 colours)' },
+        ],
+        default: 'none',
+      },
+    ],
+    chainable: true,
+    status: 'live',
+    related: ['glitch-effect', 'blur-image'],
+  },
+  {
+    slug: 'glitch-effect',
+    category: 'edit',
+    title: 'Glitch effect generator',
+    description:
+      'Create glitch art — RGB split, row shifts and scan lines — with a seed that keeps results reproducible. Batch process locally.',
+    engine: 'raster',
+    accepts: ['image/*'],
+    produces: 'same as input',
+    controls: [
+      { kind: 'slider', id: 'intensity', label: 'Intensity', min: 1, max: 100, default: 40 },
+      { kind: 'toggle', id: 'rgbSplit', label: 'RGB split', default: true },
+      { kind: 'toggle', id: 'scanlines', label: 'Scan lines', default: true },
+      { kind: 'toggle', id: 'pixelShift', label: 'Shift random rows', default: true },
+      {
+        kind: 'slider',
+        id: 'seed',
+        label: 'Variation seed',
+        min: 1,
+        max: 999,
+        default: 7,
+        hint: 'The same seed always produces the same glitch, across the whole batch.',
+      },
+    ],
+    howTo: [
+      'Drop the images to glitch.',
+      'Set the intensity and toggle the effects you want.',
+      'Keep the seed fixed for a consistent look across the batch, or change it per run.',
+      'Process and download.',
+    ],
+    chainable: true,
+    status: 'live',
+    related: ['pixelate-image'],
+  },
+  {
+    slug: 'blur-image',
+    category: 'edit',
+    title: 'Blur image',
+    description:
+      'Blur, pixelate or cover a whole photo or screenshot to hide private details before sharing. Batch, no upload.',
+    engine: 'raster',
+    accepts: ['image/*'],
+    produces: 'same as input',
+    controls: [
+      { kind: 'slider', id: 'radius', label: 'Blur radius', min: 1, max: 80, default: 12 },
+      {
+        kind: 'select',
+        id: 'mode',
+        label: 'Mode',
+        options: [
+          { value: 'gaussian', label: 'Gaussian blur' },
+          { value: 'pixelate', label: 'Pixelate' },
+          { value: 'solid', label: 'Solid cover' },
+        ],
+        default: 'gaussian',
+      },
+      { kind: 'color', id: 'coverColor', label: 'Cover colour (solid mode)', default: '#201d1d' },
+    ],
+    chainable: true,
+    status: 'live',
+    related: ['ai/blur-people', 'pixelate-image'],
+  },
+  {
+    slug: 'split-image',
+    category: 'edit',
+    title: 'Split image',
+    description:
+      'Cut any photo into a grid of tiles — equal grid, custom rows and columns or Instagram 3×3 — packaged as one ZIP.',
+    engine: 'raster',
+    accepts: ['image/*'],
+    produces: 'ZIP of PNG tiles',
+    controls: [
+      { kind: 'slider', id: 'cols', label: 'Columns', min: 1, max: 12, default: 3 },
+      { kind: 'slider', id: 'rows', label: 'Rows', min: 1, max: 12, default: 3 },
+      { kind: 'slider', id: 'gap', label: 'Tile gap (px)', min: 0, max: 64, default: 0 },
+    ],
+    howTo: [
+      'Drop the image to split.',
+      'Set the grid: 3×3 for an Instagram puzzle post, or any layout you need.',
+      'Process — every tile is rendered at full resolution and packaged into one ZIP.',
+      'Download the ZIP and post the tiles in order (r1c1, r1c2, …).',
+    ],
+    chainable: false,
+    status: 'live',
+    related: ['round-corners', 'watermark/merge-images'],
+  },
+]

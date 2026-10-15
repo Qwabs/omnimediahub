@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1400px;
+        height: 1000px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 5 probe: the audio catalog. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 180000, stepMs = 80) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+        const storeOf = () => f.contentWindow.__omh.useSession.getState()
+        const openTab = (name) => {
+          const tab = [...f.contentDocument.querySelectorAll('[role="tab"]')].find((t) =>
+            t.textContent.trim().startsWith(name),
+          )
+          tab?.click()
+        }
+        const setText = async (id, value) => {
+          const win = f.contentWindow
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
+          setter.call(el, value)
+          el.dispatchEvent(new win.Event('input', { bubbles: true }))
+        }
+        const setRange = async (id, value) => {
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const win = f.contentWindow
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
+          setter.call(el, String(value))
+          el.dispatchEvent(new win.Event('input', { bubbles: true }))
+          el.dispatchEvent(new win.Event('change', { bubbles: true }))
+        }
+        const setSelect = async (id, value) => {
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const win = f.contentWindow
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, 'value').set
+          setter.call(el, value)
+          el.dispatchEvent(new win.Event('change', { bubbles: true }))
+        }
+        const setPair = async (id, start, end) => {
+          await setRange(`${id}-start`, start)
+          await setRange(`${id}-end`, end)
+        }
+        const toggle = async (id) => {
+          const el = await until(() => f.contentDocument.getElementById(id))
+          el.click()
+        }
+
+        const drop = async (files) => {
+          const win = f.contentWindow
+          const doc = f.contentDocument
+          openTab('files')
+          await until(() => doc.querySelector('[data-testid="dropzone"]'), 20000)
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+          await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.disabled
+          })
+        }
+
+        const process = async () => {
+          const startLogId = storeOf().logs.at(-1)?.id ?? 0
+          f.contentDocument.querySelector('[data-testid="process"]').click()
+          await until(
+            () =>
+              storeOf().logs.some(
+                (line) => line.id > startLogId && /done in|cancelled after|none of the|needs a/i.test(line.text),
+              ),
+            240000,
+          )
+          await until(() => storeOf().running === false, 60000)
+          await wait(150)
+          const state = storeOf()
+          probe.lastLogs = state.logs.slice(-10).map((l) => l.text)
+          return [
+            ...state.files.filter((x) => x.result).map((x) => ({ from: x.name, ...x.result })),
+            ...state.combinedResults.map((r) => ({ from: '(combined)', ...r })),
+          ]
+        }
+
+        const runTool = async (path, files, configure) => {
+          mark(`navigate ${path}`)
+          await navigate(path)
+          if (files && files.length > 0) {
+            mark(`drop ${path}`)
+            await drop(files)
+          }
+          if (configure) {
+            mark(`configure ${path}`)
+            openTab('settings')
+            await configure()
+          }
+          mark(`process ${path}`)
+          return process()
+        }
+
+        /* ---------------- fixtures + analysis ---------------- */
+
+        function makeWav(options) {
+          const { seconds = 2, freq = 440, amplitude = 0.3, silence = null, sampleRate = 44100 } = options ?? {}
+          const n = Math.floor(sampleRate * seconds)
+          const buffer = new ArrayBuffer(44 + n * 2)
+          const view = new DataView(buffer)
+          const write = (offset, text) => {
+            for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i))
+          }
+          write(0, 'RIFF')
+          view.setUint32(4, 36 + n * 2, true)
+          write(8, 'WAVE')
+          write(12, 'fmt ')
+          view.setUint32(16, 16, true)
+          view.setUint16(20, 1, true)
+          view.setUint16(22, 1, true)
+          view.setUint32(24, sampleRate, true)
+          view.setUint32(28, sampleRate * 2, true)
+          view.setUint16(32, 2, true)
+          view.setUint16(34, 16, true)
+          write(36, 'data')
+          view.setUint32(40, n * 2, true)
+          for (let i = 0; i < n; i += 1) {
+            const t = i / sampleRate
+            const inSilence = silence && t >= silence[0] && t < silence[1]
+            const value = inSilence ? 0 : Math.sin(2 * Math.PI * freq * t) * amplitude
+            view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, value)) * 32767, true)
+          }
+          return new File([buffer], `tone-${seconds}s${silence ? '-silent' : ''}.wav`, { type: 'audio/wav' })
+        }
+
+        const decodeProbe = async (blob) => {
+          const context = new OfflineAudioContext(1, 48000, 48000)
+          return context.decodeAudioData(await blob.arrayBuffer())
+        }
+        const audioDuration = async (blob) => Math.round((await decodeProbe(blob)).duration * 100) / 100
+        const audioPeak = async (blob) => {
+          const buffer = await decodeProbe(blob)
+          let peak = 0
+          for (let c = 0; c < buffer.numberOfChannels; c += 1) {
+            const data = buffer.getChannelData(c)
+            for (let i = 0; i < data.length; i += 1) peak = Math.max(peak, Math.abs(data[i]))
+          }
+          return Math.round(peak * 10000) / 10000
+        }
+        const firstLast = async (blob) => {
+          const buffer = await decodeProbe(blob)
+          const data = buffer.getChannelData(0)
+          return { first: Math.round(data[0] * 1000) / 1000, last: Math.round(data[data.length - 1] * 1000) / 1000 }
+        }
+        const magicOf = async (blob) => {
+          const bytes = new Uint8Array(await blob.slice(0, 4).arrayBuffer())
+          return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ')
+        }
+        const toFileFromBlob = (blob, name) => new File([blob], name, { type: blob.type })
+
+        try {
+          /* 1. WAV → MP3 (also produces the MP3 used for the tag tests) */
+          let mp3Blob
+          {
+            const wav = makeWav({ seconds: 2, amplitude: 0.3 })
+            const out = await runTool('/tools/audio/audio-converter', [wav], async () => {
+              await setSelect('format', 'mp3')
+              await setRange('bitrate', 192)
+            })
+            mp3Blob = out[0].blob
+            results.convert = {
+              name: out[0].name,
+              type: out[0].type,
+              sizeKB: Math.round(out[0].size / 1024),
+              magic: await magicOf(out[0].blob),
+              duration: await audioDuration(out[0].blob),
+            }
+          }
+
+          /* 2. trim to half a second */
+          {
+            const wav = makeWav({ seconds: 2 })
+            const out = await runTool('/tools/audio/audio-trimmer', [wav], async () => {
+              await setPair('range', 0, 0.5)
+            })
+            results.trim = { duration: await audioDuration(out[0].blob), expected: 0.5 }
+          }
+
+          /* 3. merge two 1s clips with a 300ms crossfade */
+          {
+            const a = makeWav({ seconds: 1, freq: 440 })
+            const b = makeWav({ seconds: 1, freq: 660 })
+            const out = await runTool('/tools/audio/audio-merger', [a, b], async () => {
+              await setRange('crossfade', 300)
+            })
+            results.merge = {
+              duration: await audioDuration(out[0].blob),
+              expected: 1.7,
+              logs: probe.lastLogs.filter((l) => l.includes('joined')),
+            }
+          }
+
+          /* 4. normalise a quiet file to -1 dBFS */
+          {
+            const quiet = makeWav({ seconds: 1, amplitude: 0.1 })
+            const out = await runTool('/tools/audio/audio-normalizer', [quiet], async () => {
+              await setRange('targetDb', -1)
+            })
+            results.normalize = {
+              inputPeak: await audioPeak(makeWav({ seconds: 1, amplitude: 0.1 })),
+              outputPeak: await audioPeak(out[0].blob),
+              logs: probe.lastLogs.filter((l) => /peak|gain/i.test(l)),
+            }
+          }
+
+          /* 5. boost +6 dB */
+          {
+            const quiet = makeWav({ seconds: 1, amplitude: 0.2 })
+            const out = await runTool('/tools/audio/audio-volume-booster', [quiet], async () => {
+              await setRange('gain', 6)
+            })
+            results.boost = {
+              outputPeak: await audioPeak(out[0].blob),
+              logs: probe.lastLogs.filter((l) => l.includes('peak')),
+            }
+          }
+
+          /* 6. speed-up halves the duration */
+          {
+            const wav = makeWav({ seconds: 2 })
+            const out = await runTool('/tools/audio/audio-speed-pitch', [wav], async () => {
+              await setRange('speed', 2)
+            })
+            results.speed = {
+              duration: await audioDuration(out[0].blob),
+              expected: 1,
+              logs: probe.lastLogs.filter((l) => l.includes('duration')),
+            }
+          }
+
+          /* 7. reverse (WAV out, so samples are comparable) */
+          {
+            const wav = makeWav({ seconds: 1, freq: 220 })
+            const source = await firstLast(wav)
+            const out = await runTool('/tools/audio/audio-reverser', [wav], async () => {
+              await setSelect('format', 'wav')
+            })
+            const reversed = await firstLast(out[0].blob)
+            results.reverse = {
+              sourceFirst: source.first,
+              sourceLast: source.last,
+              reversedFirst: reversed.first,
+              matches: Math.abs(reversed.first - source.last) < 0.05,
+            }
+          }
+
+          /* 8. silence remover on a clip with 1.5s of dead air */
+          {
+            const wav = makeWav({ seconds: 3, silence: [0.75, 2.25] })
+            const out = await runTool('/tools/audio/silence-remover', [wav], async () => {
+              await setRange('thresholdDb', -45)
+              await setRange('minSilenceMs', 500)
+            })
+            results.silence = {
+              duration: await audioDuration(out[0].blob),
+              expected: 1.74,
+              logs: probe.lastLogs.filter((l) => l.includes('silence')),
+            }
+          }
+
+          /* 9. waveform PNG */
+          {
+            const wav = makeWav({ seconds: 1 })
+            const out = await runTool('/tools/audio/waveform-viewer', [wav], async () => {
+              await setRange('width', 960)
+              await setRange('height', 240)
+            })
+            const bitmap = await createImageBitmap(out[0].blob)
+            results.waveform = {
+              name: out[0].name,
+              type: out[0].type,
+              dimensions: `${bitmap.width}x${bitmap.height}`,
+              logs: probe.lastLogs.filter((l) => l.includes('peak')),
+            }
+            bitmap.close()
+          }
+
+          /* 10. ID3 tags: write then verify bytes; then strip */
+          {
+            const out = await runTool('/tools/audio/id3-editor', [toFileFromBlob(mp3Blob, 'song.mp3')], async () => {
+              await setText('title', 'Probe Title')
+              await setText('artist', 'OmniMediaHub')
+            })
+            const bytes = new Uint8Array(await out[0].blob.arrayBuffer())
+            const latin = Array.from(bytes.slice(0, 400), (b) => String.fromCharCode(b)).join('')
+            results.id3 = {
+              hasId3Header: latin.startsWith('ID3'),
+              hasTitleFrame: latin.includes('TIT2'),
+              hasTitleText: latin.includes('Probe Title'),
+              grewBy: out[0].size - mp3Blob.size,
+            }
+
+            const stripped = await runTool('/tools/audio/id3-editor', [toFileFromBlob(mp3Blob, 'song.mp3')], async () => {
+              await toggle('stripAll')
+            })
+            const strippedBytes = new Uint8Array(await stripped[0].blob.slice(0, 3).arrayBuffer())
+            results.id3Strip = { firstBytes: [...strippedBytes].map((b) => b.toString(16)).join(' ') }
+          }
+
+          /* 11. ringtone maker (ffmpeg, M4A) */
+          {
+            const wav = makeWav({ seconds: 2 })
+            const out = await runTool('/tools/audio/ringtone-maker', [wav], async () => {
+              await setPair('range', 0, 1)
+              await setSelect('format', 'm4a')
+            })
+            results.ringtone = out[0]
+              ? {
+                  name: out[0].name,
+                  type: out[0].type,
+                  sizeKB: Math.round(out[0].size / 1024),
+                  magic: await magicOf(out[0].blob),
+                  logs: probe.lastLogs.filter((l) => /clip|iPhone|Android/.test(l)),
+                }
+              : { failed: true, logs: probe.lastLogs.slice(-3) }
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+          try {
+            results.logs = storeOf().logs.slice(-10).map((l) => `${l.level}: ${l.text}`)
+          } catch {
+            /* ignore */
+          }
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

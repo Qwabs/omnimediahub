@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+  </head>
+  <body>
+    <script type="module">
+      const errs = []
+
+      // Minimal EXIF parser: XResolution (0x011A) + ResolutionUnit (0x0128).
+      const exifResolution = (bytes) => {
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+        let offset = 2
+        while (offset < bytes.length - 4 && bytes[offset] === 0xff) {
+          const marker = bytes[offset + 1]
+          const length = (bytes[offset + 2] << 8) | bytes[offset + 3]
+          if (marker === 0xe1) {
+            const start = offset + 4
+            const tag = String.fromCharCode(bytes[start], bytes[start + 1], bytes[start + 2], bytes[start + 3])
+            if (tag !== 'Exif') {
+              offset += length + 2
+              continue
+            }
+            const tiff = start + 6
+            const little = bytes[tiff] === 0x49
+            const rd16 = (o) => (little ? view.getUint16(o, true) : view.getUint16(o, false))
+            const rd32 = (o) => (little ? view.getUint32(o, true) : view.getUint32(o, false))
+            const ifd0 = tiff + rd32(tiff + 4)
+            const count = rd16(ifd0)
+            let xres = null
+            let unit = null
+            for (let i = 0; i < count; i += 1) {
+              const entry = ifd0 + 2 + i * 12
+              const entryTag = rd16(entry)
+              const type = rd16(entry + 2)
+              if (entryTag === 0x011a && type === 5) {
+                const valueOffset = tiff + rd32(entry + 8)
+                const num = rd32(valueOffset)
+                const den = rd32(valueOffset + 4)
+                xres = den ? num / den : null
+              }
+              if (entryTag === 0x0128 && type === 3) unit = rd16(entry + 8)
+            }
+            return { xres, unit, dpi: xres && unit === 2 ? Math.round(xres) : null }
+          }
+          offset += length + 2
+        }
+        return 'no-exif'
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = 300
+      canvas.height = 200
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#30d158'
+      ctx.fillRect(0, 0, 300, 200)
+      const jpeg = new Uint8Array(
+        await (await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.9))).arrayBuffer(),
+      )
+
+      const out = {}
+      try {
+        const mod = await import('/wasm/vips-es6.js')
+        const vips = await mod.default({ dynamicLibraries: ['vips-heif.wasm', 'vips-resvg.wasm'] })
+
+        const attempt = (name, fn) => {
+          try {
+            out[name] = exifResolution(fn())
+          } catch (error) {
+            errs.push(`${name}: ${String(error)} | ${error?.stack?.split('\n')[0] ?? ''}`)
+          }
+        }
+
+        attempt('baseline', () => vips.Image.newFromBuffer(jpeg.slice(0)).writeToBuffer('.jpg', { Q: 90 }))
+
+        attempt('res_pxPerMm_unitIn', () => {
+          const image = vips.Image.newFromBuffer(jpeg.slice(0))
+          image.setDouble('resolution', 300 / 25.4)
+          image.setString('resolution-unit', 'in')
+          return image.writeToBuffer('.jpg', { Q: 90 })
+        })
+
+        attempt('res_300_unitIn', () => {
+          const image = vips.Image.newFromBuffer(jpeg.slice(0))
+          image.setDouble('resolution', 300)
+          image.setString('resolution-unit', 'in')
+          return image.writeToBuffer('.jpg', { Q: 90 })
+        })
+
+        attempt('xresYres_pxPerMm', () => {
+          const image = vips.Image.newFromBuffer(jpeg.slice(0))
+          image.setDouble('xres', 300 / 25.4)
+          image.setDouble('yres', 300 / 25.4)
+          return image.writeToBuffer('.jpg', { Q: 90 })
+        })
+      } catch (error) {
+        errs.push(`load: ${String(error)}`)
+      }
+
+      document.title = JSON.stringify({ out, errs })
+    </script>
+  </body>
+</html>

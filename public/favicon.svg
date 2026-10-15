@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- block-pixel "O" — the brand mark, ASCII geometry, never a vector logo -->
+  <rect width="32" height="32" fill="#201d1d" />
+  <g fill="#fdfcfc">
+    <rect x="7" y="4" width="6" height="6" />
+    <rect x="13" y="4" width="6" height="6" />
+    <rect x="19" y="4" width="6" height="6" />
+    <rect x="7" y="10" width="6" height="6" />
+    <rect x="19" y="10" width="6" height="6" />
+    <rect x="7" y="16" width="6" height="6" />
+    <rect x="19" y="16" width="6" height="6" />
+    <rect x="7" y="22" width="6" height="6" />
+    <rect x="13" y="22" width="6" height="6" />
+    <rect x="19" y="22" width="6" height="6" />
+  </g>
+</svg>

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1400px;
+        height: 1000px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 1 cancel (worker + cooperative) and unsupported-input probe. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 120000, stepMs = 60) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+        const storeOf = () => f.contentWindow.__omh.useSession.getState()
+        const clickTab = (name) => {
+          const tab = [...f.contentDocument.querySelectorAll('[role="tab"]')].find((t) =>
+            t.textContent.trim().startsWith(name),
+          )
+          tab?.click()
+        }
+        const drop = async (files) => {
+          const win = f.contentWindow
+          const doc = f.contentDocument
+          clickTab('files')
+          await until(() => doc.querySelector('[data-testid="dropzone"]'), 20000)
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(
+              new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+            )
+          await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.disabled
+          })
+        }
+
+        const canvas = document.createElement('canvas')
+        canvas.width = 1200
+        canvas.height = 900
+        const ctx = canvas.getContext('2d')
+
+        async function makeImages(count, prefix) {
+          const files = []
+          for (let i = 0; i < count; i += 1) {
+            ctx.fillStyle = `hsl(${(i * 53) % 360} 65% 50%)`
+            ctx.fillRect(0, 0, 1200, 900)
+            const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'))
+            files.push(new File([blob], `${prefix}-${i}.png`, { type: 'image/png' }))
+          }
+          return files
+        }
+
+        function makeLongWav(seconds) {
+          const sr = 44100
+          const n = Math.floor(sr * seconds)
+          const buffer = new ArrayBuffer(44 + n * 2)
+          const view = new DataView(buffer)
+          const write = (offset, text) => {
+            for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i))
+          }
+          write(0, 'RIFF')
+          view.setUint32(4, 36 + n * 2, true)
+          write(8, 'WAVE')
+          write(12, 'fmt ')
+          view.setUint32(16, 16, true)
+          view.setUint16(20, 1, true)
+          view.setUint16(22, 1, true)
+          view.setUint32(24, sr, true)
+          view.setUint32(28, sr * 2, true)
+          view.setUint16(32, 2, true)
+          view.setUint16(34, 16, true)
+          write(36, 'data')
+          view.setUint32(40, n * 2, true)
+          for (let i = 0; i < n; i += 1) {
+            view.setInt16(44 + i * 2, Math.sin((2 * Math.PI * 220 * i) / sr) * 0.5 * 32767, true)
+          }
+          return new File([buffer], 'long.wav', { type: 'audio/wav' })
+        }
+
+        const runAndCancel = async (delayMs) => {
+          f.contentDocument.querySelector('[data-testid="process"]').click()
+          await until(() => storeOf().running === true, 15000)
+          await wait(delayMs)
+          const cancelButton = f.contentDocument.querySelector('[data-testid="cancel"]')
+          const found = Boolean(cancelButton)
+          if (cancelButton) cancelButton.click()
+          await until(() => storeOf().running === false, 60000)
+          await wait(400)
+          const state = storeOf()
+          return {
+            cancelButtonFound: found,
+            done: state.files.filter((x) => x.state === 'done').length,
+            errored: state.files.filter((x) => x.state === 'error').length,
+            pending: state.files.filter((x) => x.state === 'queued' || x.state === 'running').length,
+            summary: state.logs
+              .slice(-4)
+              .map((l) => l.text)
+              .filter((t) => /cancel|done in/i.test(t)),
+            uiAlive: Boolean(f.contentDocument.querySelector('[data-testid="workspace"]')),
+          }
+        }
+
+        try {
+          /* ---------- A. cancel a worker-pool batch ---------- */
+          mark('A: navigate resize 1920x1080')
+          await navigate('/tools/resize/resize-image-to-1920x1080')
+          const images = await makeImages(40, 'heavy')
+          mark('A: drop 40 images')
+          await drop(images)
+          mark('A: process then cancel')
+          results.cancelImages = await runAndCancel(250)
+
+          /* ---------- B. cancel a cooperative audio encode ---------- */
+          mark('B: navigate audio converter')
+          await navigate('/tools/audio/audio-converter')
+          const wav = makeLongWav(60)
+          mark('B: drop 60s wav')
+          await drop([wav])
+          mark('B: process then cancel')
+          const startedB = performance.now()
+          results.cancelAudio = await runAndCancel(400)
+          results.cancelAudio.cancelLatencyMs = Math.round(performance.now() - startedB)
+
+          /* ---------- C. unsupported input + normal file ---------- */
+          mark('C: navigate converter')
+          await navigate('/tools/convert/image-converter')
+          const ok = (await makeImages(1, 'ok'))[0]
+          const text = new File([new TextEncoder().encode('not an image')], 'notes.txt', {
+            type: 'text/plain',
+          })
+          mark('C: drop mixed batch')
+          await drop([ok, text])
+          mark('C: process mixed')
+          f.contentDocument.querySelector('[data-testid="process"]').click()
+          await until(() => storeOf().running === true, 15000)
+          await until(() => storeOf().running === false, 60000)
+          const mixed = storeOf()
+          results.mixed = {
+            done: mixed.files.filter((x) => x.state === 'done').map((x) => x.result?.name),
+            errored: mixed.files
+              .filter((x) => x.state === 'error')
+              .map((x) => `${x.name}: ${x.error}`),
+            summary: mixed.logs.slice(-3).map((l) => l.text),
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1400px;
+        height: 1000px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 2 probe: compression search, crops, metadata, effects. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 120000, stepMs = 80) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+        const storeOf = () => f.contentWindow.__omh.useSession.getState()
+        const openTab = (name) => {
+          const tab = [...f.contentDocument.querySelectorAll('[role="tab"]')].find((t) =>
+            t.textContent.trim().startsWith(name),
+          )
+          tab?.click()
+        }
+        const setText = async (id, value) => {
+          const win = f.contentWindow
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
+          setter.call(el, value)
+          el.dispatchEvent(new win.Event('input', { bubbles: true }))
+        }
+        const toggle = async (id) => {
+          const el = await until(() => f.contentDocument.getElementById(id))
+          el.click()
+        }
+
+        const drop = async (files) => {
+          const win = f.contentWindow
+          const doc = f.contentDocument
+          openTab('files')
+          await until(() => doc.querySelector('[data-testid="dropzone"]'), 20000)
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(
+              new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+            )
+          await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.disabled
+          })
+        }
+
+        const process = async () => {
+          const startLogId = storeOf().logs.at(-1)?.id ?? 0
+          f.contentDocument.querySelector('[data-testid="process"]').click()
+          // A run always ends with a summary log line — wait for that rather
+          // than polling `running`, which can flip true→false between polls.
+          await until(
+            () =>
+              storeOf().logs.some(
+                (line) => line.id > startLogId && /done in|cancelled after|none of the|needs a/i.test(line.text),
+              ),
+            180000,
+          )
+          await until(() => storeOf().running === false, 60000)
+          await wait(200)
+          const state = storeOf()
+          probe.lastLogs = state.logs.slice(-8).map((l) => `${l.level}: ${l.text}`)
+          return [
+            ...state.files
+              .filter((x) => x.result)
+              .map((x) => ({ from: x.name, ...x.result, error: x.error })),
+            ...state.combinedResults.map((r) => ({ from: '(combined)', ...r })),
+          ]
+        }
+
+        const runTool = async (path, files, configure) => {
+          mark(`navigate ${path}`)
+          await navigate(path)
+          mark(`drop ${path}`)
+          await drop(files)
+          if (configure) {
+            mark(`configure ${path}`)
+            openTab('settings')
+            await configure()
+          }
+          mark(`process ${path}`)
+          return process()
+        }
+
+        /* ---------------- fixtures ---------------- */
+
+        const gradientCanvas = (w, h) => {
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          const grad = ctx.createLinearGradient(0, 0, w, h)
+          grad.addColorStop(0, '#007aff')
+          grad.addColorStop(1, '#30d158')
+          ctx.fillStyle = grad
+          ctx.fillRect(0, 0, w, h)
+          ctx.fillStyle = '#201d1d'
+          ctx.font = '32px monospace'
+          ctx.fillText('OMH', 16, 96)
+          return canvas
+        }
+
+        const noiseCanvas = (w, h) => {
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          const image = ctx.createImageData(w, h)
+          for (let i = 0; i < image.data.length; i += 4) {
+            image.data[i] = (i * 7) % 251
+            image.data[i + 1] = (i * 13) % 241
+            image.data[i + 2] = (i * 29) % 239
+            image.data[i + 3] = 255
+          }
+          ctx.putImageData(image, 0, 0)
+          return canvas
+        }
+
+        const toFile = async (canvas, type, name, quality = 0.92) => {
+          const blob = await new Promise((r) => canvas.toBlob(r, type, quality))
+          return new File([blob], name, { type })
+        }
+
+        const pixelInfo = async (blob, points) => {
+          const bitmap = await createImageBitmap(blob)
+          const canvas = document.createElement('canvas')
+          canvas.width = bitmap.width
+          canvas.height = bitmap.height
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(bitmap, 0, 0)
+          const out = { width: bitmap.width, height: bitmap.height }
+          for (const [label, x, y] of points) {
+            const data = ctx.getImageData(x, y, 1, 1).data
+            out[label] = [data[0], data[1], data[2], data[3]]
+          }
+          bitmap.close()
+          return out
+        }
+
+        const toFileFromBlob = (blob, name) => new File([blob], name, { type: blob.type })
+
+        try {
+          /* 1. compress to an exact size (search engine) */
+          {
+            const big = await toFile(noiseCanvas(1600, 1200), 'image/jpeg', 'noisy.jpg', 0.95)
+            const outputs = await runTool('/tools/compress/compress-to-100kb', [big])
+            const result = outputs[0]
+            results.compress100kb = {
+              name: result.name,
+              type: result.type,
+              sizeKB: Math.round(result.size / 1024),
+              underTarget: result.size <= 100 * 1024,
+              fromKB: Math.round(big.size / 1024),
+              dimensions: (await pixelInfo(result.blob, [])).width + 'x' + (await pixelInfo(result.blob, [])).height,
+            }
+          }
+
+          /* 2. passport photo with a 4x6 print sheet */
+          {
+            const photo = await toFile(gradientCanvas(600, 800), 'image/jpeg', 'portrait.jpg')
+            const outputs = await runTool('/tools/crop/passport-photo-cropper', [photo], async () => {
+              await toggle('compose4x6')
+              probe.toggleState = f.contentDocument.getElementById('compose4x6')?.getAttribute('aria-checked')
+            })
+            const dims = await pixelInfo(outputs[0].blob, [])
+            results.passportSheet = {
+              name: outputs[0].name,
+              sizeKB: Math.round(outputs[0].size / 1024),
+              dimensions: `${dims.width}x${dims.height}`,
+              expected: '1200x1800 (4x6in @300dpi)',
+              toggleState: probe.toggleState,
+              logs: probe.lastLogs,
+            }
+          }
+
+          /* 3. circle crop with transparency */
+          {
+            const photo = await toFile(gradientCanvas(800, 600), 'image/png', 'square.png')
+            const outputs = await runTool('/tools/crop/circle-image-cropper', [photo])
+            results.circleCrop = await pixelInfo(outputs[0].blob, [
+              ['corner', 1, 1],
+              ['center', 256, 256],
+            ])
+            results.circleCrop.type = outputs[0].type
+          }
+
+          /* 4. grayscale adjustment */
+          {
+            const photo = await toFile(gradientCanvas(400, 300), 'image/png', 'colour.png')
+            const outputs = await runTool('/tools/adjust/grayscale-image', [photo])
+            const info = await pixelInfo(outputs[0].blob, [
+              ['center', 200, 150],
+              ['quarter', 100, 75],
+            ])
+            const grey = (px) => px[0] === px[1] && px[1] === px[2]
+            results.grayscale = {
+              dimensions: `${info.width}x${info.height}`,
+              center: info.center,
+              quarter: info.quarter,
+              isGrayscale: grey(info.center) && grey(info.quarter),
+            }
+          }
+
+          /* 5. metadata write → read round trip */
+          {
+            const photo = await toFile(gradientCanvas(500, 400), 'image/jpeg', 'tagged.jpg', 0.9)
+            const edited = await runTool('/tools/exif/exif-editor', [photo], async () => {
+              await setText('artist', 'OmniMediaHub Probe')
+            })
+            const editorLogs = probe.lastLogs
+            if (edited[0]?.blob) {
+              const bytes = new Uint8Array(await edited[0].blob.arrayBuffer())
+              const latin1 = Array.from(bytes, (b) => String.fromCharCode(b)).join('')
+              const report = await runTool('/tools/exif/exif-viewer', [
+                toFileFromBlob(edited[0].blob, edited[0].name),
+              ])
+              const json = JSON.parse(await report[0].blob.text())
+              results.exifRoundTrip = {
+                written: 'OmniMediaHub Probe',
+                artist: json.tags?.Artist ?? null,
+                artistInBytes: latin1.includes('OmniMediaHub Probe'),
+                editorLogs,
+                dimensions: `${json.summary?.width}x${json.summary?.height}`,
+              }
+            }
+          }
+
+          /* 6. DPI write → read round trip */
+          {
+            const photo = await toFile(gradientCanvas(600, 600), 'image/jpeg', 'dpi.jpg', 0.9)
+            const converted = await runTool('/tools/exif/dpi-converter', [photo], async () => {
+              setText('dpi', '300')
+            })
+            const report = await runTool('/tools/exif/dpi-checker', [
+              toFileFromBlob(converted[0].blob, converted[0].name),
+            ])
+            const json = JSON.parse(await report[0].blob.text())
+            results.dpiRoundTrip = {
+              expected: 300,
+              readBack: json.summary?.dpi ?? null,
+              tagKeys: Object.keys(json.tags ?? {}).slice(0, 24),
+              logs: probe.lastLogs,
+            }
+          }
+
+          /* 7. split into a ZIP */
+          {
+            const photo = await toFile(gradientCanvas(900, 900), 'image/png', 'puzzle.png')
+            const outputs = await runTool('/tools/edit/split-image', [photo])
+            results.splitZip = {
+              name: outputs[0].name,
+              type: outputs[0].type,
+              sizeKB: Math.round(outputs[0].size / 1024),
+              isZip: outputs[0].type === 'application/zip' && outputs[0].name.endsWith('.zip'),
+            }
+          }
+
+          /* 8. merge three images into a grid */
+          {
+            const a = await toFile(gradientCanvas(240, 160), 'image/png', 'a.png')
+            const b = await toFile(gradientCanvas(240, 160), 'image/png', 'b.png')
+            const c = await toFile(gradientCanvas(240, 160), 'image/png', 'c.png')
+            const outputs = await runTool('/tools/watermark/merge-images', [a, b, c])
+            const dims = await pixelInfo(outputs[0].blob, [])
+            results.mergeGrid = {
+              outputs: outputs.length,
+              dimensions: `${dims.width}x${dims.height}`,
+              expected: '736x160 (3 cols, gap 8)',
+            }
+          }
+
+          /* 9. rounded corners produce transparency */
+          {
+            const photo = await toFile(gradientCanvas(400, 400), 'image/png', 'rounded.png')
+            const outputs = await runTool('/tools/edit/round-corners', [photo])
+            results.roundCorners = await pixelInfo(outputs[0].blob, [
+              ['corner', 0, 0],
+              ['center', 200, 200],
+            ])
+            results.roundCorners.type = outputs[0].type
+          }
+
+          /* 10. watermark text keeps dimensions */
+          {
+            const photo = await toFile(gradientCanvas(800, 600), 'image/png', 'mark.png')
+            const outputs = await runTool('/tools/watermark/image-watermark', [photo])
+            const dims = await pixelInfo(outputs[0].blob, [])
+            results.watermarkText = {
+              name: outputs[0].name,
+              dimensions: `${dims.width}x${dims.height}`,
+            }
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+          try {
+            const state = storeOf()
+            results.logs = state.logs.slice(-14).map((l) => `${l.level}: ${l.text}`)
+            results.fileStates = state.files.map((x) => `${x.name}: ${x.state}${x.error ? ` — ${x.error}` : ''}`)
+          } catch {
+            /* ignore */
+          }
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OmniMediaHub OG card</title>
+    <style>
+      /* 1200x630 social card in the terminal/manpage design language. */
+      * {
+        margin: 0;
+        box-sizing: border-box;
+      }
+      body {
+        width: 1200px;
+        height: 630px;
+        background: #fdfcfc;
+        color: #201d1d;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        display: flex;
+        flex-direction: column;
+        padding: 56px 64px;
+        gap: 28px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 20px;
+      }
+      .chip {
+        background: #201d1d;
+        color: #fdfcfc;
+        padding: 4px 10px;
+      }
+      h1 {
+        font-size: 54px;
+        font-weight: 700;
+        line-height: 1.3;
+        max-width: 20ch;
+      }
+      .lead {
+        font-size: 22px;
+        color: #424245;
+        max-width: 46ch;
+        line-height: 1.55;
+      }
+      .dark {
+        margin-top: auto;
+        background: #201d1d;
+        color: #fdfcfc;
+        padding: 22px 26px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        font-size: 20px;
+      }
+      .prompt {
+        background: #302c2c;
+        padding: 12px 16px;
+        border-radius: 4px;
+      }
+      .accent {
+        color: #007aff;
+      }
+      .success {
+        color: #30d158;
+      }
+      .muted {
+        color: #9a9898;
+      }
+      .bar {
+        display: flex;
+        gap: 32px;
+        font-size: 18px;
+        color: #9a9898;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <span class="chip">0 uploads · ever</span>
+      <span>images · GIF · video · audio</span>
+    </div>
+    <h1>Your media never leaves your device.</h1>
+    <p class="lead">
+      A privacy-first batch media toolbox: 94 tools — convert, compress, crop, resize, edit, transcribe
+      — all running locally in your browser.
+    </p>
+    <div class="dark">
+      <div class="prompt">
+        <span class="muted">│ chain</span> <span class="accent">heic → jpg</span> →
+        <span class="accent">[compress 100kb]</span> → <span class="accent">resize 1080×1080</span>
+      </div>
+      <div>
+        <span class="success">[✓]</span> 128 files heic → jpg 12.4s
+        <span class="muted">· 0 server uploads</span>
+      </div>
+      <div class="bar">
+        <span>free forever</span>
+        <span>works offline</span>
+        <span>no sign-up</span>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1400px;
+        height: 1000px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 7 probe: the pipeline console and scenes. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 120000, stepMs = 100) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+        const storeOf = () => f.contentWindow.__omh.useSession.getState()
+        const doc = () => f.contentDocument
+        const clickTestId = async (id) => {
+          const el = await until(() => doc().querySelector(`[data-testid="${id}"]`), 15000)
+          el.click()
+        }
+        const chainSteps = async () => {
+          const items = await until(() => {
+            const list = doc().querySelectorAll('[data-testid="pipeline-steps"] li')
+            return list.length > 0 ? list : null
+          }, 15000)
+          return [...items].map((item) => item.textContent.replace(/\s+/g, ' ').trim())
+        }
+
+        const drop = async (files) => {
+          const win = f.contentWindow
+          await until(() => doc().querySelector('[data-testid="dropzone"]'), 20000)
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc()
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+          await until(() => {
+            const button = doc().querySelector('[data-testid="run-pipeline"]')
+            return button && !button.disabled
+          }, 30000)
+        }
+
+        const runPipeline = async (timeoutMs = 300000) => {
+          const startLogId = storeOf().logs.at(-1)?.id ?? 0
+          await clickTestId('run-pipeline')
+          await until(
+            () =>
+              storeOf().logs.some(
+                (line) => line.id > startLogId && /done in|cancelled after|not wired|cannot run inside/i.test(line.text),
+              ),
+            timeoutMs,
+          )
+          await until(() => storeOf().running === false, 120000)
+          await wait(300)
+          probe.lastLogs = storeOf().logs.slice(-12).map((l) => l.text)
+          const state = storeOf()
+          return state.files
+            .filter((file) => file.result)
+            .map((file) => ({
+              from: file.name,
+              name: file.result.name,
+              type: file.result.type,
+              size: file.result.size,
+              blob: file.result.blob,
+              error: file.error,
+            }))
+        }
+
+        /* ---------------- fixtures ---------------- */
+
+        const photoCanvas = (index, width = 800, height = 600) => {
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          const grad = ctx.createLinearGradient(0, 0, width, height)
+          grad.addColorStop(0, `hsl(${index * 70} 70% 55%)`)
+          grad.addColorStop(1, `hsl(${index * 70 + 40} 60% 45%)`)
+          ctx.fillStyle = grad
+          ctx.fillRect(0, 0, width, height)
+          ctx.fillStyle = '#201d1d'
+          ctx.font = '48px monospace'
+          ctx.fillText(`shot ${index + 1}`, 30, 90)
+          return canvas
+        }
+
+        const toFile = async (canvas, type, name, quality = 0.92) => {
+          const blob = await new Promise((r) => canvas.toBlob(r, type, quality))
+          return new File([blob], name, { type })
+        }
+
+        const imageInfo = async (blob) => {
+          const bitmap = await createImageBitmap(blob)
+          const info = { dimensions: `${bitmap.width}x${bitmap.height}` }
+          bitmap.close()
+          return info
+        }
+
+        try {
+          /* 1. shareable URL → 3-step chain over 3 files */
+          const chain = [
+            { toolRef: 'convert/to-webp', params: { quality: 80 } },
+            { toolRef: 'resize/resize-image-to-512x512', params: {} },
+            { toolRef: 'compress/compress-to-50kb', params: {} },
+          ]
+          const encoded = f.contentWindow.btoa(
+            String.fromCharCode(...new TextEncoder().encode(JSON.stringify(chain))),
+          )
+            .replaceAll('+', '-')
+            .replaceAll('/', '_')
+            .replaceAll('=', '')
+
+          mark('navigate shared pipeline')
+          await navigate(`/console?p=${encoded}`)
+          const sharedChain = await chainSteps()
+
+          mark('drop 3 photos')
+          const photos = await Promise.all(
+            [0, 1, 2].map((index) => toFile(photoCanvas(index), 'image/png', `photo-${index + 1}.png`)),
+          )
+          await drop(photos)
+
+          mark('run 3x3 pipeline')
+          const outputs = await runPipeline()
+          const first = outputs[0]
+          results.chain = {
+            sharedChainLength: sharedChain.length,
+            outputs: outputs.length,
+            names: outputs.map((output) => output.name),
+            types: [...new Set(outputs.map((output) => output.type))],
+            sizesKB: outputs.map((output) => Math.round(output.size / 1024)),
+            allUnder50kb: outputs.every((output) => output.size <= 50 * 1024),
+            dimensions: first ? (await imageInfo(first.blob)).dimensions : null,
+            expectedDimensions: '512x512',
+            logs: probe.lastLogs.filter((l) => /pipeline:|done in/.test(l)),
+          }
+
+          /* 2. presets fill the chain */
+          mark('preset')
+          await navigate('/console')
+          await clickTestId('preset-web-delivery')
+          const presetChain = await chainSteps()
+          results.preset = {
+            length: presetChain.length,
+            steps: presetChain.map((text) => text.slice(0, 60)),
+          }
+
+          /* 3. a scene opens as an editable chain */
+          mark('scene → console')
+          await navigate('/scenes/app-icon-export')
+          const sceneButton = await until(
+            () => [...doc().querySelectorAll('a')].find((a) => /open in the console/i.test(a.textContent)),
+            15000,
+          )
+          sceneButton.click()
+          await wait(600)
+          const sceneChain = await chainSteps()
+          results.scene = { length: sceneChain.length, steps: sceneChain.map((text) => text.slice(0, 50)) }
+
+          /* 4. reorder + remove */
+          mark('reorder')
+          const before = (await chainSteps())[0]
+          const upButtons = [...doc().querySelectorAll('[aria-label^="Move step"]')]
+          const downButton = upButtons.find((button) => button.getAttribute('aria-label').includes('down'))
+          downButton?.click()
+          await wait(300)
+          const afterMove = await chainSteps()
+          const removeButton = [...doc().querySelectorAll('[aria-label^="Remove step"]')][0]
+          removeButton?.click()
+          await wait(300)
+          const afterRemove = await chainSteps()
+          results.edit = {
+            firstBefore: before.slice(0, 40),
+            firstAfterMove: afterMove[0].slice(0, 40),
+            reordered: afterMove[0] !== before,
+            countAfterRemove: afterRemove.length,
+            countBeforeRemove: afterMove.length,
+          }
+
+          /* 5. copy-link round trip through the app's own codec */
+          mark('copy link')
+          const logBefore = storeOf().logs.length
+          const copyButton = [...doc().querySelectorAll('button')].find((button) =>
+            /copy link/i.test(button.textContent),
+          )
+          copyButton?.click()
+          const line = await until(
+            () =>
+              storeOf()
+                .logs.slice(logBefore)
+                .map((l) => l.text)
+                .find((text) => /pipeline link|copy this link/.test(text)),
+            15000,
+          )
+          const url = line.match(/https?:\S+/)?.[0] ?? ''
+          results.copyLink = { logged: line.slice(0, 40), urlLength: url.length, hasPayload: url.includes('?p=') }
+
+          if (url) {
+            mark('open copied link')
+            await navigate(url.replace('http://localhost:4173', ''))
+            const roundTrip = await chainSteps()
+            results.roundTrip = { length: roundTrip.length, steps: roundTrip.map((text) => text.slice(0, 40)) }
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+          try {
+            results.logs = storeOf().logs.slice(-10).map((l) => `${l.level}: ${l.text}`)
+          } catch {
+            /* ignore */
+          }
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

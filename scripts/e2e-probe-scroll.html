@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1200px;
+        height: 800px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Scroll behaviour probe: navigation lands at the top, back/forward keeps
+         its restored position, and the [ ↑ top ] control shows, scrolls and
+         hides again. Probe-initiated scrolls use `instant` so assertions don't
+         race the site's smooth-scroll stylesheet. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 30000, stepMs = 100) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+        const doc = () => f.contentDocument
+        const win = () => f.contentWindow
+        const scrollY = () => Math.round(win().scrollY)
+        const instantScroll = (top) => win().scrollTo({ top, behavior: 'instant' })
+        const findLink = (pattern) =>
+          [...doc().querySelectorAll('a')].find((anchor) => pattern.test(anchor.textContent ?? ''))
+        const backToTop = () => doc().querySelector('button[aria-label="Back to top"]')
+
+        try {
+          /* 1. the reported bug: link in the middle of the home page */
+          mark('home page')
+          await navigate('/')
+          const viewAll = await until(() => findLink(/view all/i), 20000)
+          const sectionY = viewAll.getBoundingClientRect().top + scrollY()
+          viewAll.scrollIntoView({ block: 'center', behavior: 'instant' })
+          await wait(400)
+          const beforeClick = scrollY()
+
+          mark('click view all')
+          viewAll.click()
+          await until(() => /all tools/i.test(doc().querySelector('h1')?.textContent ?? ''), 20000)
+          await wait(400)
+          results.viewAll = {
+            sectionOffset: Math.round(sectionY),
+            scrollBeforeClick: beforeClick,
+            pathname: win().location.pathname,
+            scrollAfterNav: scrollY(),
+            landedAtTop: scrollY() === 0,
+          }
+
+          /* 2. the [ ↑ top ] control */
+          mark('back-to-top control')
+          const hiddenAtTop = !backToTop()
+          instantScroll(win().document.documentElement.scrollHeight)
+          await wait(400)
+          const control = await until(() => backToTop(), 5000)
+          const controlLabel = control.textContent.trim()
+          const scrollBeforeControlClick = scrollY()
+          control.click()
+          await until(() => scrollY() === 0, 10000)
+          await wait(300)
+          results.backToTop = {
+            hiddenAtTop,
+            visibleWhenScrolled: true,
+            label: controlLabel,
+            scrollBeforeClick: scrollBeforeControlClick,
+            scrollAfterClick: scrollY(),
+            hiddenAgainAtTop: !backToTop(),
+          }
+
+          /* 3. any other mid-page link resets too (category grid on /tools) */
+          mark('second mid-page link')
+          const categoryLink = await until(
+            () => [...doc().querySelectorAll('a[href^="/tools/"]')].find((anchor) => /crop/i.test(anchor.textContent ?? '')),
+            20000,
+          )
+          categoryLink.scrollIntoView({ block: 'center', behavior: 'instant' })
+          await wait(300)
+          const beforeCategory = scrollY()
+          categoryLink.click()
+          await until(() => /cropping/i.test(doc().querySelector('h1')?.textContent ?? ''), 20000)
+          await wait(400)
+          results.categoryLink = {
+            scrollBeforeClick: beforeCategory,
+            pathname: win().location.pathname,
+            scrollAfterNav: scrollY(),
+            landedAtTop: scrollY() === 0,
+          }
+
+          /* 4. back/forward must keep the browser-restored position (POP) */
+          mark('forward into a tool page')
+          const toolLink = await until(
+            () => doc().querySelector('a[href="/tools/crop/image-cropper"]'),
+            20000,
+          )
+          instantScroll(600)
+          await wait(300)
+          const listScroll = scrollY()
+          toolLink.click()
+          await until(() => /bulk image cropper/i.test(doc().querySelector('h1')?.textContent ?? ''), 20000)
+          await wait(300)
+          results.toolNav = { pathname: win().location.pathname, scrollAfterNav: scrollY() }
+
+          mark('history.back()')
+          win().history.back()
+          await until(() => /cropping/i.test(doc().querySelector('h1')?.textContent ?? ''), 20000)
+          await wait(600)
+          results.back = {
+            pathname: win().location.pathname,
+            scrollRestored: scrollY(),
+            expectedAround: listScroll,
+            preserved: Math.abs(scrollY() - listScroll) < 80,
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

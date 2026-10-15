@@ -1,0 +1,301 @@
+/*
+ * Base layer + component classes.
+ *
+ * Component classes live in `@layer components` so Tailwind utilities can
+ * always override them (utilities win over components in the cascade).
+ */
+
+/* ---------------------------------------------------------------------- */
+/* fonts — self-hosted JetBrains Mono (documented Berkeley Mono substitute) */
+/* ---------------------------------------------------------------------- */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Smooth in-page scrolling (anchors, the [ ↑ top ] control) unless the user
+     asks for reduced motion — route changes stay instant (ScrollToTop passes
+     an explicit `instant`). */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-ink);
+    color: var(--color-canvas);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.5;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  hr {
+    border: 0;
+    border-top: 1px solid var(--color-hairline);
+  }
+
+  /* Flat focus signal: no halo, no glow. */
+  :focus-visible {
+    outline: 1px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  img,
+  svg,
+  video,
+  canvas {
+    display: block;
+    max-width: 100%;
+  }
+
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------------- */
+  /* buttons                                                           */
+  /* ---------------------------------------------------------------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 36px;
+    padding: 4px 20px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 2;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .btn-primary {
+    background: var(--color-ink);
+    color: var(--color-on-primary);
+  }
+  .btn-primary:active {
+    background: var(--color-ink-deep);
+  }
+
+  .btn-secondary {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    border-color: var(--color-hairline-strong);
+  }
+  .btn-secondary:active {
+    background: var(--color-surface-card);
+  }
+
+  .btn:disabled,
+  .btn[aria-disabled='true'] {
+    background: var(--color-surface-card);
+    color: var(--color-ash);
+    border-color: transparent;
+    cursor: not-allowed;
+  }
+
+  /* tab strip */
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: transparent;
+    color: var(--color-mute);
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 2;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+  }
+  .tab-active {
+    color: var(--color-ink);
+    border-bottom-color: var(--color-ash);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* form fields                                                       */
+  /* ---------------------------------------------------------------- */
+  .field {
+    width: 100%;
+    height: 40px;
+    padding: 8px 12px;
+    background: var(--color-surface-soft);
+    color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    font-size: 16px;
+  }
+  .field::placeholder {
+    color: var(--color-ash);
+  }
+  .field:focus {
+    outline: none;
+    background: var(--color-canvas);
+    border-color: var(--color-ink);
+  }
+  .field:focus-visible {
+    outline: none;
+  }
+
+  textarea.field {
+    height: auto;
+    min-height: 96px;
+    padding: 12px;
+    resize: vertical;
+  }
+
+  select.field {
+    appearance: none;
+    padding-right: 32px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--color-ink) 50%),
+      linear-gradient(135deg, var(--color-ink) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 17px, calc(100% - 13px) 17px;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+  }
+
+  /* minimal range input — hairline track, ink thumb */
+  .slider {
+    width: 100%;
+    height: 24px;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+  }
+  .slider::-webkit-slider-runnable-track {
+    height: 1px;
+    background: var(--color-hairline-strong);
+  }
+  .slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -6px;
+    background: var(--color-ink);
+    border-radius: var(--radius-sm);
+  }
+  .slider::-moz-range-track {
+    height: 1px;
+    background: var(--color-hairline-strong);
+  }
+  .slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: var(--color-ink);
+    border: 0;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* structural helpers                                                */
+  /* ---------------------------------------------------------------- */
+  .hairline-t {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .hairline-b {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .hairline-l {
+    border-left: 1px solid var(--color-hairline);
+  }
+  .hairline-r {
+    border-right: 1px solid var(--color-hairline);
+  }
+
+  /* a bordered text block — the system's only "card" */
+  .text-block {
+    border: 1px solid var(--color-hairline);
+    background: var(--color-canvas);
+    border-radius: 0;
+  }
+
+  .row-hover {
+    transition: background-color 80ms linear;
+  }
+  .row-hover:hover {
+    background: var(--color-surface-soft);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* console — the single dark surface inside the workspace            */
+  /* ---------------------------------------------------------------- */
+  .console {
+    background: var(--color-surface-dark);
+    color: var(--color-on-dark);
+    border-radius: 0;
+  }
+  .console-row {
+    background: var(--color-surface-dark-elevated);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+  }
+}

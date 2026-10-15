@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1400px;
+        height: 1000px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 1 batch + cancel acceptance probe. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 180000, stepMs = 100) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+
+        const canvas = document.createElement('canvas')
+        canvas.width = 400
+        canvas.height = 300
+        const ctx = canvas.getContext('2d')
+
+        async function makeFiles(count, prefix) {
+          const files = []
+          for (let i = 0; i < count; i += 1) {
+            ctx.fillStyle = `hsl(${(i * 37) % 360} 70% 55%)`
+            ctx.fillRect(0, 0, 400, 300)
+            ctx.fillStyle = '#201d1d'
+            ctx.font = '40px monospace'
+            ctx.fillText(`#${i}`, 20, 150)
+            const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'))
+            files.push(new File([blob], `${prefix}-${String(i).padStart(3, '0')}.png`, { type: 'image/png' }))
+          }
+          return files
+        }
+
+        const storeOf = () => f.contentWindow.__omh.useSession.getState()
+
+        const clickTab = (name) => {
+          const tab = [...f.contentDocument.querySelectorAll('[role="tab"]')].find((t) =>
+            t.textContent.trim().startsWith(name),
+          )
+          tab?.click()
+        }
+
+        const drop = async (files) => {
+          const win = f.contentWindow
+          const doc = f.contentDocument
+          clickTab('files')
+          await until(() => doc.querySelector('[data-testid="dropzone"]'))
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(
+              new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+            )
+          await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.disabled
+          })
+        }
+
+        const heap = () =>
+          performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null
+
+        try {
+          mark('navigate')
+          await navigate('/tools/convert/image-converter')
+          const doc = f.contentDocument
+          const win = f.contentWindow
+
+          /* ---------- 1. 100-file batch ---------- */
+          mark('make 100 fixtures')
+          const files = await makeFiles(100, 'batch')
+          mark('drop 100')
+          await drop(files)
+
+          mark('process 100')
+          const started = performance.now()
+          doc.querySelector('[data-testid="process"]').click()
+          await until(() => storeOf().running === true, 15000)
+          await until(() => storeOf().running === false, 240000)
+          const elapsed = performance.now() - started
+
+          const store = storeOf()
+          const done = store.files.filter((x) => x.state === 'done').length
+          const failed = store.files.filter((x) => x.state === 'error').length
+          const totalOut = store.files.reduce((sum, x) => sum + (x.result?.size ?? 0), 0)
+          results.batch = {
+            files: store.files.length,
+            done,
+            failed,
+            elapsedMs: Math.round(elapsed),
+            perFileMs: Math.round(elapsed / Math.max(1, done)),
+            totalOutputKB: Math.round(totalOut / 1024),
+            heapMB: heap(),
+            logs: store.logs.slice(-4).map((l) => l.text),
+          }
+
+          /* ---------- 2. cancel mid-run ---------- */
+          mark('reset')
+          store.clearFiles()
+          await wait(200)
+
+          mark('make 100 more')
+          const files2 = await makeFiles(100, 'cancel')
+          mark('drop 100 again')
+          await drop(files2)
+
+          mark('process then cancel')
+          doc.querySelector('[data-testid="process"]').click()
+          await until(() => storeOf().running === true, 15000)
+          await wait(120)
+          const cancelButton = doc.querySelector('[data-testid="cancel"]')
+          results.cancel = { cancelButtonFound: Boolean(cancelButton) }
+          if (cancelButton) cancelButton.click()
+
+          await until(() => storeOf().running === false, 60000)
+          await wait(800)
+
+          const after = storeOf()
+          results.cancel.after = {
+            running: after.running,
+            done: after.files.filter((x) => x.state === 'done').length,
+            errored: after.files.filter((x) => x.state === 'error').length,
+            queued: after.files.filter((x) => x.state === 'queued').length,
+            logs: after.logs
+              .slice(-6)
+              .map((l) => l.text)
+              .filter((t) => /cancel|done in|terminat/i.test(t)),
+            uiAlive: Boolean(f.contentDocument.querySelector('[data-testid="workspace"]')),
+            heapMB: heap(),
+          }
+
+          /* ---------- 3. UI still usable after cancel ---------- */
+          mark('post-cancel navigation')
+          await navigate('/tools')
+          results.afterCancelNav = {
+            toolsRendered: Boolean(f.contentDocument.querySelector('a[href^="/tools/"]')),
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      iframe {
+        width: 1400px;
+        height: 1000px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 3 probe: the GIF catalog. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 120000, stepMs = 80) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+        const storeOf = () => f.contentWindow.__omh.useSession.getState()
+        const openTab = (name) => {
+          const tab = [...f.contentDocument.querySelectorAll('[role="tab"]')].find((t) =>
+            t.textContent.trim().startsWith(name),
+          )
+          tab?.click()
+        }
+        const setText = async (id, value) => {
+          const win = f.contentWindow
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
+          setter.call(el, value)
+          el.dispatchEvent(new win.Event('input', { bubbles: true }))
+        }
+        const setRange = async (id, value) => {
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const win = f.contentWindow
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
+          setter.call(el, String(value))
+          el.dispatchEvent(new win.Event('input', { bubbles: true }))
+          el.dispatchEvent(new win.Event('change', { bubbles: true }))
+        }
+        const setSelect = async (id, value) => {
+          const el = await until(() => f.contentDocument.getElementById(id))
+          const win = f.contentWindow
+          const setter = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, 'value').set
+          setter.call(el, value)
+          el.dispatchEvent(new win.Event('change', { bubbles: true }))
+        }
+        const setPair = async (id, start, end) => {
+          await setRange(`${id}-start`, start)
+          await setRange(`${id}-end`, end)
+        }
+
+        const drop = async (files) => {
+          const win = f.contentWindow
+          const doc = f.contentDocument
+          openTab('files')
+          await until(() => doc.querySelector('[data-testid="dropzone"]'), 20000)
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+          await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.disabled
+          })
+        }
+
+        const process = async () => {
+          const startLogId = storeOf().logs.at(-1)?.id ?? 0
+          f.contentDocument.querySelector('[data-testid="process"]').click()
+          await until(
+            () =>
+              storeOf().logs.some(
+                (line) =>
+                  line.id > startLogId && /done in|cancelled after|none of the|needs a|ignored/i.test(line.text),
+              ),
+            240000,
+          )
+          await until(() => storeOf().running === false, 60000)
+          await wait(150)
+          const state = storeOf()
+          probe.lastLogs = state.logs.slice(-9).map((l) => l.text)
+          return [
+            ...state.files.filter((x) => x.result).map((x) => ({ from: x.name, ...x.result })),
+            ...state.combinedResults.map((r) => ({ from: '(combined)', ...r })),
+          ]
+        }
+
+        const runTool = async (path, files, configure) => {
+          mark(`navigate ${path}`)
+          await navigate(path)
+          if (files && files.length > 0) {
+            mark(`drop ${path}`)
+            await drop(files)
+          }
+          if (configure) {
+            mark(`configure ${path}`)
+            openTab('settings')
+            await configure()
+          }
+          mark(`process ${path}`)
+          return process()
+        }
+
+        /* ---------------- fixtures ---------------- */
+
+        const frameCanvas = (index, width = 200, height = 200) => {
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          ctx.fillStyle = `hsl(${index * 60} 70% 55%)`
+          ctx.fillRect(0, 0, width, height)
+          ctx.fillStyle = '#201d1d'
+          ctx.font = '48px monospace'
+          ctx.fillText(String(index + 1), 16, 110)
+          return canvas
+        }
+
+        const toFile = async (canvas, type, name, quality = 0.92) => {
+          const blob = await new Promise((r) => canvas.toBlob(r, type, quality))
+          return new File([blob], name, { type })
+        }
+        const toFileFromBlob = (blob, name) => new File([blob], name, { type: blob.type })
+
+        const magicOf = async (blob) => {
+          const bytes = new Uint8Array(await blob.slice(0, 12).arrayBuffer())
+          return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ')
+        }
+
+        const pixelInfo = async (blob, points = []) => {
+          const bitmap = await createImageBitmap(blob)
+          const canvas = document.createElement('canvas')
+          canvas.width = bitmap.width
+          canvas.height = bitmap.height
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(bitmap, 0, 0)
+          const out = { dimensions: `${bitmap.width}x${bitmap.height}` }
+          for (const [label, x, y] of points) {
+            out[label] = Array.from(ctx.getImageData(x, y, 1, 1).data)
+          }
+          bitmap.close()
+          return out
+        }
+
+        async function makeWebm() {
+          const canvas = document.createElement('canvas')
+          canvas.width = 160
+          canvas.height = 120
+          const ctx = canvas.getContext('2d')
+          const stream = canvas.captureStream(15)
+          const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' })
+          const chunks = []
+          recorder.ondataavailable = (event) => chunks.push(event.data)
+          const stopped = new Promise((resolve) => (recorder.onstop = resolve))
+          recorder.start()
+          const t0 = performance.now()
+          await new Promise((resolve) => {
+            const tick = () => {
+              const t = performance.now() - t0
+              ctx.fillStyle = `hsl(${(t / 4) % 360} 80% 60%)`
+              ctx.fillRect(0, 0, 160, 120)
+              if (t < 1000) requestAnimationFrame(tick)
+              else resolve()
+            }
+            tick()
+          })
+          recorder.stop()
+          await stopped
+          return new File(chunks, 'clip.webm', { type: 'video/webm' })
+        }
+
+        try {
+          /* ---------- fixture: build a 5-frame GIF ---------- */
+          const frames = await Promise.all([0, 1, 2, 3, 4].map((i) => toFile(frameCanvas(i), 'image/png', `f${i}.png`)))
+          const made = await runTool('/tools/gif/gif-maker', frames, async () => {
+            await setRange('delay', 100)
+            await setRange('width', 200)
+          })
+          const gifBlob = made[0].blob
+          results.maker = {
+            name: made[0].name,
+            type: made[0].type,
+            sizeKB: Math.round(made[0].size / 1024),
+            magic: await magicOf(gifBlob),
+            logs: probe.lastLogs.filter((l) => l.includes('frames')),
+          }
+          const asGif = (name, blob = gifBlob) => toFileFromBlob(blob, name)
+
+          /* ---------- compression ladder ---------- */
+          {
+            const out = await runTool('/tools/gif/gif-compressor', [asGif('clip.gif')], async () => {
+              await setRange('targetKb', 30)
+            })
+            results.compress = {
+              sizeKB: Math.round(out[0].size / 1024),
+              underTarget: out[0].size <= 30 * 1024,
+              magic: await magicOf(out[0].blob),
+              logs: probe.lastLogs.filter((l) => l.includes('target') || l.includes('colours')),
+            }
+          }
+
+          /* ---------- resize (Discord 128 preset) ---------- */
+          {
+            const out = await runTool('/tools/gif/gif-resizer', [asGif('clip.gif')], async () => {
+              await setSelect('preset', '128')
+            })
+            const info = await pixelInfo(out[0].blob)
+            results.resize = { dimensions: info.dimensions, logs: probe.lastLogs.filter((l) => l.includes('128')) }
+          }
+
+          /* ---------- crop to square from a wide GIF ---------- */
+          {
+            const wideFrames = await Promise.all(
+              [0, 1, 2].map((i) => toFile(frameCanvas(i, 300, 120), 'image/png', `w${i}.png`)),
+            )
+            const wide = await runTool('/tools/gif/gif-maker', wideFrames, async () => {
+              await setRange('width', 300)
+            })
+            const out = await runTool('/tools/gif/gif-cropper', [asGif('wide.gif', wide[0].blob)], async () => {
+              await setSelect('ratio', '1:1')
+            })
+            const info = await pixelInfo(out[0].blob)
+            results.crop = { dimensions: info.dimensions, expected: '120x120' }
+          }
+
+          /* ---------- rotate ---------- */
+          {
+            const out = await runTool('/tools/gif/gif-rotator', [asGif('clip.gif')], async () => {
+              await setSelect('transform', '90')
+            })
+            const info = await pixelInfo(out[0].blob)
+            results.rotate = { dimensions: info.dimensions, logs: probe.lastLogs.filter((l) => l.includes('×')) }
+          }
+
+          /* ---------- reverse / speed / trim (via notes) ---------- */
+          {
+            const reversed = await runTool('/tools/gif/gif-reverser', [asGif('clip.gif')])
+            results.reverse = { sizeKB: Math.round(reversed[0].size / 1024), logs: probe.lastLogs.filter((l) => l.includes('reversed')) }
+          }
+          {
+            const sped = await runTool('/tools/gif/gif-speed-changer', [asGif('clip.gif')], async () => {
+              await setRange('speed', 2)
+            })
+            results.speed = { sizeKB: Math.round(sped[0].size / 1024), logs: probe.lastLogs.slice(-4) }
+          }
+          {
+            const trimmed = await runTool('/tools/gif/gif-trimmer', [asGif('clip.gif')], async () => {
+              await setPair('range', 0, 0.3)
+            })
+            results.trim = { sizeKB: Math.round(trimmed[0].size / 1024), logs: probe.lastLogs.slice(-4) }
+          }
+
+          /* ---------- frame extraction ---------- */
+          {
+            const all = await runTool('/tools/gif/gif-frame-extractor', [asGif('clip.gif')])
+            results.extractAll = {
+              name: all[0].name,
+              type: all[0].type,
+              magic: await magicOf(all[0].blob),
+              logs: probe.lastLogs.filter((l) => l.includes('frames packaged')),
+            }
+            const first = await runTool('/tools/gif/gif-frame-extractor', [asGif('clip.gif')], async () => {
+              await setSelect('mode', 'first')
+            })
+            const info = await pixelInfo(first[0].blob)
+            results.extractFirst = { name: first[0].name, dimensions: info.dimensions }
+          }
+
+          /* ---------- sprite sheet round trip ---------- */
+          {
+            const sheet = await runTool('/tools/gif/gif-to-sprite-sheet', [asGif('clip.gif')], async () => {
+              await setRange('cols', 5)
+            })
+            const info = await pixelInfo(sheet[0].blob)
+            results.spriteSheet = { dimensions: info.dimensions, expected: '1000x200 (5 cols of 200x200)' }
+
+            const rebuilt = await runTool('/tools/gif/sprite-sheet-to-gif', [
+              toFileFromBlob(sheet[0].blob, 'sheet.png'),
+            ], async () => {
+              await setRange('cols', 5)
+              await setRange('rows', 1)
+            })
+            results.spriteToGif = {
+              name: rebuilt[0].name,
+              magic: await magicOf(rebuilt[0].blob),
+              logs: probe.lastLogs.filter((l) => l.includes('frames')),
+            }
+          }
+
+          /* ---------- generator: typing text (no input files) ---------- */
+          {
+            const typed = await runTool('/tools/gif/typing-text-gif', [], async () => {
+              await setText('text', 'Hi!')
+              await setRange('width', 320)
+              await setRange('height', 120)
+            })
+            results.typingText = {
+              name: typed[0].name,
+              magic: await magicOf(typed[0].blob),
+              sizeKB: Math.round(typed[0].size / 1024),
+              logs: probe.lastLogs.filter((l) => l.includes('frames')),
+            }
+          }
+
+          /* ---------- Discord sticker ---------- */
+          {
+            const out = await runTool('/tools/gif/gif-to-discord-sticker', [asGif('clip.gif')])
+            const info = await pixelInfo(out[0].blob)
+            results.discordSticker = {
+              dimensions: info.dimensions,
+              sizeKB: Math.round(out[0].size / 1024),
+              magic: await magicOf(out[0].blob),
+            }
+          }
+
+          /* ---------- text + blur ---------- */
+          {
+            const out = await runTool('/tools/gif/gif-text-adder', [asGif('clip.gif')], async () => {
+              await setText('text', 'OMH')
+            })
+            results.textAdder = { sizeKB: Math.round(out[0].size / 1024), logs: probe.lastLogs.slice(-4) }
+          }
+          {
+            const out = await runTool('/tools/gif/blur-gif', [asGif('clip.gif')], async () => {
+              await setSelect('mode', 'pixelate')
+            })
+            results.blur = { sizeKB: Math.round(out[0].size / 1024), logs: probe.lastLogs.slice(-4) }
+          }
+
+          /* ---------- merge two GIFs ---------- */
+          {
+            const second = await runTool('/tools/gif/gif-maker', frames.slice(0, 3), async () => {
+              await setRange('width', 200)
+            })
+            const merged = await runTool('/tools/gif/gif-merger', [
+              asGif('clip-a.gif'),
+              asGif('clip-b.gif', second[0].blob),
+            ])
+            results.merger = { sizeKB: Math.round(merged[0].size / 1024), logs: probe.lastLogs.filter((l) => l.includes('clips')) }
+          }
+
+          /* ---------- ffmpeg: video → GIF ---------- */
+          {
+            const webm = await makeWebm()
+            const out = await runTool('/tools/gif/video-to-gif', [webm], async () => {
+              await setPair('range', 0, 0.6)
+              await setRange('fps', 10)
+              await setRange('width', 200)
+            })
+            results.videoToGif = {
+              name: out[0].name,
+              type: out[0].type,
+              sizeKB: Math.round(out[0].size / 1024),
+              magic: await magicOf(out[0].blob),
+            }
+          }
+
+          /* ---------- ffmpeg: GIF → mp4 / webp / apng ---------- */
+          {
+            const mp4 = await runTool('/tools/gif/gif-to-mp4', [asGif('clip.gif')])
+            results.gifToMp4 = {
+              name: mp4[0].name,
+              type: mp4[0].type,
+              sizeKB: Math.round(mp4[0].size / 1024),
+              magic: await magicOf(mp4[0].blob),
+            }
+          }
+          {
+            const webp = await runTool('/tools/gif/gif-to-webp', [asGif('clip.gif')])
+            results.gifToWebp = {
+              name: webp[0].name,
+              type: webp[0].type,
+              sizeKB: Math.round(webp[0].size / 1024),
+              magic: await magicOf(webp[0].blob),
+            }
+          }
+          {
+            const apng = await runTool('/tools/gif/gif-to-apng', [asGif('clip.gif')])
+            results.gifToApng = {
+              name: apng[0].name,
+              type: apng[0].type,
+              sizeKB: Math.round(apng[0].size / 1024),
+              magic: await magicOf(apng[0].blob),
+            }
+          }
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+          try {
+            results.logs = storeOf().logs.slice(-10).map((l) => `${l.level}: ${l.text}`)
+          } catch {
+            /* ignore */
+          }
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>

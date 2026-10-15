@@ -1,0 +1,122 @@
+/*
+ * OmniMediaHub design tokens.
+ *
+ * Values are lifted 1:1 from DESIGN-opencode.ai.md (the OpenCode marketing
+ * system). Tailwind v4 `@theme` turns each custom property into utilities,
+ * so `bg-canvas`, `text-body-md`, `pt-section`, `rounded-sm` all resolve
+ * from a single source of truth.
+ *
+ * Rules of the system (do not bend these):
+ *   - cream canvas is the ONLY page background
+ *   - 4px radius on interactive elements, 0px on containers
+ *   - no shadows, no gradients, no sans-serif
+ *   - the semantic ramp (accent/warning/danger/success) is reserved for the
+ *     in-product console surface
+ */
+
+@theme {
+  /* ------------------------------------------------------------------ */
+  /* colors — brand & surfaces                                           */
+  /* ------------------------------------------------------------------ */
+  --color-canvas: #fdfcfc;
+  --color-ink: #201d1d;
+  --color-ink-deep: #0f0000;
+  --color-charcoal: #302c2c;
+  --color-body: #424245;
+  --color-mute: #646262;
+  --color-stone: #6e6e73;
+  --color-ash: #9a9898;
+  --color-surface-soft: #f8f7f7;
+  --color-surface-card: #f1eeee;
+  --color-surface-dark: #201d1d;
+  --color-surface-dark-elevated: #302c2c;
+  --color-hairline: rgba(15, 0, 0, 0.12);
+  --color-hairline-strong: #646262;
+  --color-on-dark: #fdfcfc;
+  --color-on-dark-mute: #9a9898;
+  --color-on-primary: #fdfcfc;
+
+  /* colors — semantic (in-product console only) */
+  --color-accent: #007aff;
+  --color-accent-hover: #0056b3;
+  --color-accent-active: #004085;
+  --color-warning: #ff9f0a;
+  --color-warning-hover: #cc7f08;
+  --color-warning-active: #995f06;
+  --color-danger: #ff3b30;
+  --color-danger-hover: #d70015;
+  --color-danger-active: #a50011;
+  --color-success: #30d158;
+
+  /* ------------------------------------------------------------------ */
+  /* typography                                                          */
+  /* ------------------------------------------------------------------ */
+  --font-mono:
+    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, 'SFMono-Regular',
+    Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  /* The system has no proportional face. `font-sans` intentionally aliases
+     the mono stack so any stray default still lands on brand. */
+  --font-sans: var(--font-mono);
+
+  --text-display-xl: 38px;
+  --text-display-xl--line-height: 1.5;
+  --text-display-xl--font-weight: 700;
+
+  --text-heading-md: 16px;
+  --text-heading-md--line-height: 1.5;
+  --text-heading-md--font-weight: 700;
+
+  --text-body-md: 16px;
+  --text-body-md--line-height: 1.5;
+  --text-body-md--font-weight: 400;
+
+  --text-body-strong: 16px;
+  --text-body-strong--line-height: 1.5;
+  --text-body-strong--font-weight: 500;
+
+  --text-body-tight: 16px;
+  --text-body-tight--line-height: 1;
+  --text-body-tight--font-weight: 500;
+
+  --text-link-md: 16px;
+  --text-link-md--line-height: 1.5;
+  --text-link-md--font-weight: 400;
+
+  --text-button-md: 16px;
+  --text-button-md--line-height: 2;
+  --text-button-md--font-weight: 500;
+
+  --text-caption-md: 14px;
+  --text-caption-md--line-height: 2;
+  --text-caption-md--font-weight: 400;
+
+  /* ------------------------------------------------------------------ */
+  /* spacing                                                             */
+  /* ------------------------------------------------------------------ */
+  --spacing-xxs: 1px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --spacing-xxl: 32px;
+  --spacing-section: 96px;
+
+  /* ------------------------------------------------------------------ */
+  /* radius                                                              */
+  /* ------------------------------------------------------------------ */
+  --radius-sm: 4px;
+  --radius-full: 9999px;
+
+  /* ------------------------------------------------------------------ */
+  /* layout                                                              */
+  /* ------------------------------------------------------------------ */
+  --container-page: 70rem; /* ~1120px outer frame */
+  --container-prose: 60rem; /* ~960px reading column */
+
+  /* ------------------------------------------------------------------ */
+  /* breakpoints (from DESIGN.md responsive table)                       */
+  /* ------------------------------------------------------------------ */
+  --breakpoint-tablet-narrow: 48rem; /* 768px — nav collapses */
+  --breakpoint-tablet: 53.125rem; /* 850px */
+}

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #fdfcfc;
+      }
+      iframe {
+        width: 1400px;
+        height: 1200px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/"></iframe>
+    <script>
+      /* Phase 1 end-to-end probe: drives the real app in the iframe. */
+      async function main() {
+        const f = document.getElementById('f')
+        const results = {}
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+        // Diagnostics: the runner polls window.__probe.step.
+        const probe = { step: 'boot', results }
+        window.__probe = probe
+        const mark = (value) => {
+          probe.step = value
+        }
+
+        async function until(fn, timeout = 180000, stepMs = 150) {
+          const t0 = performance.now()
+          for (;;) {
+            try {
+              const value = await fn()
+              if (value) return value
+            } catch {
+              /* keep polling */
+            }
+            if (performance.now() - t0 > timeout) throw new Error('timeout: ' + probe.step)
+            await wait(stepMs)
+          }
+        }
+
+        const navigate = (url) =>
+          new Promise((resolve) => {
+            f.onload = () => resolve()
+            f.src = url
+          })
+
+        async function runTool(path, files) {
+          mark(`navigate ${path}`)
+          await navigate(path)
+          const win = f.contentWindow
+          const doc = f.contentDocument
+          mark(`wait dropzone ${path}`)
+          await until(() => doc.querySelector('[data-testid="dropzone"]'))
+
+          mark(`drop ${files.length} files`)
+          const dt = new win.DataTransfer()
+          for (const file of files) dt.items.add(file)
+          doc
+            .querySelector('[data-testid="dropzone"]')
+            .dispatchEvent(
+              new win.DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
+            )
+
+          mark('wait process enabled')
+          const process = await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.disabled ? button : null
+          })
+          mark('process')
+          process.click()
+
+          mark('wait results')
+          const t0 = performance.now()
+          for (;;) {
+            if (doc.querySelectorAll('[data-testid="result"]').length > 0) break
+            if (performance.now() - t0 > 90000) throw new Error('timeout: wait results')
+            await wait(300)
+            const snapshotStore = win.__omh?.useSession?.getState?.()
+            probe.snapshot = snapshotStore
+              ? {
+                  running: snapshotStore.running,
+                  progress: snapshotStore.progress,
+                  activeToolRef: snapshotStore.activeToolRef,
+                  files: snapshotStore.files.map((x) => ({
+                    name: x.name,
+                    state: x.state,
+                    error: x.error,
+                    progress: x.progress,
+                  })),
+                  logs: snapshotStore.logs.slice(-12).map((l) => `${l.level}: ${l.text}`),
+                }
+              : { storeMissing: true, omhType: typeof win.__omh }
+          }
+          mark('wait idle')
+          await until(() => {
+            const button = doc.querySelector('[data-testid="process"]')
+            return button && !button.textContent.includes('processing')
+          })
+
+          mark(`read store ${path}`)
+          const store = win.__omh.useSession.getState()
+          const outputs = [
+            ...store.files
+              .filter((x) => x.result)
+              .map((x) => ({ from: x.name, fromSize: x.size, ...x.result })),
+            ...store.combinedResults.map((r) => ({ from: '(combined)', fromSize: 0, ...r })),
+          ]
+          const logs = store.logs.slice(-8).map((l) => l.text)
+          return { outputs, logs }
+        }
+
+        /* ---------------- fixtures (generated in-browser) ---------------- */
+
+        async function makeImage(type, name, w = 240, h = 160) {
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          const grad = ctx.createLinearGradient(0, 0, w, h)
+          grad.addColorStop(0, '#007aff')
+          grad.addColorStop(1, '#30d158')
+          ctx.fillStyle = grad
+          ctx.fillRect(0, 0, w, h)
+          ctx.fillStyle = '#201d1d'
+          ctx.font = '32px monospace'
+          ctx.fillText('OMH', 16, 96)
+          const blob = await new Promise((r) => canvas.toBlob(r, type, 0.92))
+          return new File([blob], name, { type })
+        }
+
+        function makeWav(seconds = 1.5, freq = 440) {
+          const sr = 44100
+          const n = Math.floor(sr * seconds)
+          const buffer = new ArrayBuffer(44 + n * 2)
+          const view = new DataView(buffer)
+          const write = (offset, text) => {
+            for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i))
+          }
+          write(0, 'RIFF')
+          view.setUint32(4, 36 + n * 2, true)
+          write(8, 'WAVE')
+          write(12, 'fmt ')
+          view.setUint32(16, 16, true)
+          view.setUint16(20, 1, true)
+          view.setUint16(22, 1, true)
+          view.setUint32(24, sr, true)
+          view.setUint32(28, sr * 2, true)
+          view.setUint16(32, 2, true)
+          view.setUint16(34, 16, true)
+          write(36, 'data')
+          view.setUint32(40, n * 2, true)
+          for (let i = 0; i < n; i += 1) {
+            view.setInt16(44 + i * 2, Math.sin((2 * Math.PI * freq * i) / sr) * 0.6 * 32767, true)
+          }
+          return new File([buffer], 'tone.wav', { type: 'audio/wav' })
+        }
+
+        async function makeWebm() {
+          const canvas = document.createElement('canvas')
+          canvas.width = 160
+          canvas.height = 120
+          const ctx = canvas.getContext('2d')
+          const stream = canvas.captureStream(15)
+          const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' })
+          const chunks = []
+          recorder.ondataavailable = (event) => chunks.push(event.data)
+          const stopped = new Promise((resolve) => (recorder.onstop = resolve))
+          recorder.start()
+          const t0 = performance.now()
+          await new Promise((resolve) => {
+            const tick = () => {
+              const t = performance.now() - t0
+              ctx.fillStyle = `hsl(${(t / 4) % 360} 80% 60%)`
+              ctx.fillRect(0, 0, 160, 120)
+              if (t < 1200) requestAnimationFrame(tick)
+              else resolve()
+            }
+            tick()
+          })
+          recorder.stop()
+          await stopped
+          return new File(chunks, 'clip.webm', { type: 'video/webm' })
+        }
+
+        const describe = async (blob) => {
+          const bytes = new Uint8Array(await blob.slice(0, 4).arrayBuffer())
+          const magic = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ')
+          let dimensions = null
+          if (blob.type.startsWith('image/')) {
+            try {
+              const bitmap = await createImageBitmap(blob)
+              dimensions = `${bitmap.width}x${bitmap.height}`
+              bitmap.close()
+            } catch {
+              dimensions = 'decode-failed'
+            }
+          }
+          return { type: blob.type, size: blob.size, magic, dimensions }
+        }
+
+        /* ---------------- tests ---------------- */
+
+        try {
+          const png = await makeImage('image/png', 'fixture.png')
+          const png2 = await makeImage('image/png', 'fixture-2.png')
+          const png3 = await makeImage('image/png', 'fixture-3.png')
+
+          {
+            const { outputs, logs } = await runTool('/tools/convert/png-to-jpg', [png])
+            results.pngToJpg = {
+              name: outputs[0].name,
+              ...(await describe(outputs[0].blob)),
+              logs: logs.slice(-3),
+            }
+          }
+
+          {
+            const { outputs, logs } = await runTool('/tools/convert/image-converter', [png, png2])
+            results.bulkConvert = {
+              count: outputs.length,
+              names: outputs.map((o) => o.name),
+              ...(await describe(outputs[0].blob)),
+              logs: logs.slice(-3),
+            }
+          }
+
+          {
+            const { outputs } = await runTool('/tools/resize/resize-image-to-512x512', [png])
+            results.resize512 = { name: outputs[0].name, ...(await describe(outputs[0].blob)) }
+          }
+
+          {
+            const { outputs } = await runTool('/tools/rotate/image-rotator', [png])
+            results.rotate90 = { ...(await describe(outputs[0].blob)) }
+          }
+
+          {
+            const svgSource =
+              '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120">' +
+              '<rect width="200" height="120" fill="#007aff"/>' +
+              '<circle cx="100" cy="60" r="40" fill="#30d158"/></svg>'
+            const svg = new File([new TextEncoder().encode(svgSource)], 'mark.svg', {
+              type: 'image/svg+xml',
+            })
+            const { outputs, logs } = await runTool('/tools/convert/svg-to-png', [svg])
+            results.svgToPng = {
+              name: outputs[0].name,
+              ...(await describe(outputs[0].blob)),
+              logs: logs.slice(-3),
+            }
+          }
+
+          {
+            const { outputs, logs } = await runTool('/tools/gif/gif-maker', [png, png2, png3])
+            results.gifMaker = {
+              name: outputs[0].name,
+              ...(await describe(outputs[0].blob)),
+              logs: logs.slice(-3),
+            }
+          }
+
+          {
+            const wav = makeWav()
+            const { outputs, logs } = await runTool('/tools/audio/audio-converter', [wav])
+            results.audioMp3 = {
+              name: outputs[0].name,
+              ...(await describe(outputs[0].blob)),
+              logs: logs.slice(-4),
+            }
+          }
+
+          {
+            try {
+              const webm = await makeWebm()
+              const { outputs, logs } = await runTool('/tools/video/video-trimmer', [webm])
+              results.videoTrim = {
+                name: outputs[0].name,
+                ...(await describe(outputs[0].blob)),
+                logs: logs.slice(-4),
+              }
+            } catch (error) {
+              results.videoTrim = { error: String(error) }
+            }
+          }
+
+          // Closing showcase: a 3-file image batch to screenshot.
+          mark('showcase')
+          await runTool('/tools/convert/image-converter', [png, png2, png3])
+        } catch (error) {
+          results.fatal = String(error && error.stack ? error.stack : error)
+        }
+
+        probe.step = 'done'
+        document.title = JSON.stringify(results)
+      }
+
+      main().catch((error) => {
+        document.title = JSON.stringify({ fatal: String(error) })
+      })
+    </script>
+  </body>
+</html>
