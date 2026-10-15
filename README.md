@@ -51,11 +51,23 @@ node scripts/e2e-offline.mjs                                    # PWA offline ve
 |---|---|
 | Build command | `npm run build` |
 | Output directory | `dist` |
-| Node version | 22+ (the build copies WASM assets and prerenders) |
+| Node version | 24 (set `NODE_VERSION=24`; matches CI) — the build copies WASM assets and prerenders |
 
 `public/_headers` ships with the deployment and is the load-bearing file: **COOP `same-origin` + COEP `require-corp`** enable `SharedArrayBuffer`, which the multithreaded WASM engines need. Fonts, WASM binaries, models and the OG image are all same-origin, so `require-corp` breaks nothing. Long-lived immutable caching is set for `/assets`, `/fonts`, `/wasm`, `/ffmpeg` and `/models`; `sw.js` is `no-cache`.
 
 The site is fully static — no functions, no database, no server processing. `dist/` deploys anywhere that can serve files with the headers above.
+
+### Git-connected auto-deploys
+
+The repository is wired for Cloudflare Pages' Git integration: every push to `main` deploys the live site, and every pull request gets its own preview URL. Nothing secret is involved — the build is fully static, so no environment variables are required beyond the Node version.
+
+To connect (or recreate) the deployment:
+
+1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** → pick `Qwabs/omnimediahub`.
+2. Production branch **`main`** · build command **`npm run build`** · output directory **`dist`**.
+3. Set **`NODE_VERSION=24`** to match CI (an `.nvmrc` works too).
+
+Both CI (`.github/workflows/ci.yml`) and Cloudflare build every push — CI is the correctness gate, Cloudflare the deployer. To make CI the only gate, pause Cloudflare's builds in **Settings → Builds & deployments**.
 
 ## Layout
 
