@@ -14,7 +14,10 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest: the `latest` label migrates to
+    # Ubuntu 26 on 2026-10-19; pinning keeps CI deterministic until the
+    # new image has settled.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
