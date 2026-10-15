@@ -16,6 +16,9 @@
   "compatibility_date": "2026-10-15",
   "assets": {
     "directory": "./dist",
+    // Canonical URLs have no trailing slash (see the sitemap), so serve
+    // `/tools` directly instead of 307-ing to `/tools/`.
+    "html_handling": "drop-trailing-slash",
     "not_found_handling": "404-page"
   }
 }
