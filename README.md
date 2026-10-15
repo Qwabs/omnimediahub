@@ -45,31 +45,36 @@ node scripts/e2e-offline.mjs                                    # PWA offline ve
 
 `npm run build` writes **154 prerendered pages** plus `404.html`, `sitemap.xml`, `sw.js` and the web manifest. The client hydrates over the static HTML.
 
-## Deploy (Cloudflare Pages)
+## Deploy (Cloudflare Workers, static assets)
+
+The site deploys as an **assets-only Worker**: `wrangler.jsonc` points the upload at `dist/`, and the platform build runs `npm run build` followed by `npx wrangler deploy`. No Worker script is involved — Cloudflare serves the prerendered files directly.
 
 | Setting | Value |
 |---|---|
 | Build command | `npm run build` |
-| Output directory | `dist` |
-| Node version | 24 (set `NODE_VERSION=24`; matches CI) — the build copies WASM assets and prerenders |
+| Deploy command | `npx wrangler deploy` |
+| Config | `wrangler.jsonc` (committed — see the note below) |
+| Node version | 24 (`.nvmrc`, matches CI) |
 
-`public/_headers` ships with the deployment and is the load-bearing file: **COOP `same-origin` + COEP `require-corp`** enable `SharedArrayBuffer`, which the multithreaded WASM engines need. Fonts, WASM binaries, models and the OG image are all same-origin, so `require-corp` breaks nothing. Long-lived immutable caching is set for `/assets`, `/fonts`, `/wasm`, `/ffmpeg` and `/models`; `sw.js` is `no-cache`.
+`public/_headers` ships inside `dist/` and is the load-bearing file: **COOP `same-origin` + COEP `require-corp`** enable `SharedArrayBuffer`, which the multithreaded WASM engines need. Everything served is same-origin, or carries `Cross-Origin-Resource-Policy: cross-origin` (the pinned jsDelivr engine binaries), so `require-corp` breaks nothing. Long-lived immutable caching is set for `/assets`, `/fonts`, `/wasm`, `/ffmpeg` and `/models`; `sw.js` is `no-cache`.
 
-The only assets not served from the deployment are the oversized engine binaries — the ~31 MB ffmpeg core wasm and the ONNX runtime builds — which exceed Pages' **25 MiB per-file limit** and are therefore pinned to jsDelivr (`src/engine/vendor.ts`; byte-identity verified, versions asserted in `vendor.test.ts`). The service worker caches them on first use like every other engine file, so offline behaviour is unchanged.
+The only assets not served from the deployment are the oversized engine binaries — the ~31 MB ffmpeg core wasm and the ONNX runtime builds — which exceed Cloudflare's **25 MiB per-file asset limit** and are therefore pinned to jsDelivr (`src/engine/vendor.ts`; byte-identity verified, versions asserted in `vendor.test.ts`). The service worker caches them on first use like every other engine file, so offline behaviour is unchanged.
 
 The site is fully static — no functions, no database, no server processing. `dist/` deploys anywhere that can serve files with the headers above.
 
+**Why `wrangler.jsonc` is committed:** without it, the platform build's `npx wrangler deploy` falls back to interactive auto-configuration — which, in a non-interactive environment, installed the Cloudflare Vite plugin, re-ran the build with different SSR output and broke the prerender step. The committed config makes the deploy deterministic: upload `dist/` as static assets, nothing else.
+
 ### Git-connected auto-deploys
 
-The repository is wired for Cloudflare Pages' Git integration: every push to `main` deploys the live site, and every pull request gets its own preview URL. Nothing secret is involved — the build is fully static, so no environment variables are required beyond the Node version.
+The repository is wired to Cloudflare's Git integration: every push to `main` builds and deploys, and every pull request gets its own preview URL. Nothing secret is involved — the build is fully static.
 
 To connect (or recreate) the deployment:
 
-1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** → pick `Qwabs/omnimediahub`.
-2. Production branch **`main`** · build command **`npm run build`** · output directory **`dist`**.
-3. Set **`NODE_VERSION=24`** to match CI (an `.nvmrc` works too).
+1. Cloudflare dashboard → **Workers & Pages → Create** → connect `Qwabs/omnimediahub`.
+2. Build command **`npm run build`** · deploy command **`npx wrangler deploy`**.
+3. Keep `wrangler` pinned in devDependencies (exact version) so the deploy command resolves the local binary instead of fetching whatever is latest.
 
-Both CI (`.github/workflows/ci.yml`) and Cloudflare build every push — CI is the correctness gate, Cloudflare the deployer. To make CI the only gate, pause Cloudflare's builds in **Settings → Builds & deployments**.
+Both CI (`.github/workflows/ci.yml`) and Cloudflare build every push — CI is the correctness gate, Cloudflare the deployer.
 
 ## Layout
 

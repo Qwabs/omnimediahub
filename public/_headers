@@ -1,11 +1,10 @@
-/*
-  Cloudflare Pages headers.
-
-  COOP/COEP enable cross-origin isolation → SharedArrayBuffer → the
-  multithreaded WebAssembly engines (ffmpeg core-mt, ONNX runtime threads).
-  Everything we serve is same-origin so require-corp is safe — fonts, WASM
-  binaries, models and OG images are all self-hosted.
-*/
+# Cloudflare response headers — parsed for Workers static assets and Pages
+# deployments alike. (`#` is the only comment syntax this format supports.)
+#
+# COOP/COEP enable cross-origin isolation → SharedArrayBuffer → the
+# multithreaded WebAssembly engines. Everything served is same-origin, or
+# carries Cross-Origin-Resource-Policy: cross-origin (the pinned jsDelivr
+# engine binaries), so require-corp is safe.
 /*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp

@@ -1,0 +1,21 @@
+/*
+ * Cloudflare deployment — an assets-only Worker; the site is fully static.
+ * `npm run build` writes dist/ and `npx wrangler deploy` uploads it as-is.
+ *
+ * This file must stay committed. Without it, the platform build's deploy
+ * command falls back to interactive auto-configuration which, in a
+ * non-interactive environment, installed the Cloudflare Vite plugin and
+ * re-ran the build with different SSR output — crashing the prerender step.
+ *
+ * `public/_headers` still applies: Workers static assets parse it for
+ * COOP/COEP and caching rules.
+ */
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "omnimediahub",
+  "compatibility_date": "2026-10-15",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  }
+}
