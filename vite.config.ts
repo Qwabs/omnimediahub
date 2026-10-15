@@ -66,6 +66,20 @@ export default defineConfig({
             },
           },
           {
+            // Oversized engine binaries pinned to jsDelivr: the ffmpeg core
+            // wasm and the ONNX runtime builds — see src/engine/vendor.ts.
+            urlPattern: ({ url }) =>
+              url.origin === 'https://cdn.jsdelivr.net' &&
+              (url.pathname.startsWith('/npm/@ffmpeg/core@') ||
+                url.pathname.startsWith('/npm/onnxruntime-web@')),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'omh-engines',
+              expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 180 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
             urlPattern: ({ url }) => url.pathname.startsWith('/fonts/'),
             handler: 'CacheFirst',
             options: {

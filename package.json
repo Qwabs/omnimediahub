@@ -8,6 +8,7 @@
     "dev": "vite",
     "prebuild": "node scripts/copy-vendor-assets.mjs",
     "build": "tsc -b && vite build && vite build --ssr src/entry-server.tsx --outDir dist-server && node scripts/prerender.mjs",
+    "postbuild": "node scripts/trim-dist-assets.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

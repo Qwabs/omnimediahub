@@ -9,6 +9,7 @@
  *      transcribe
  */
 import type { WorkerRequest, WorkerResponse } from '../types'
+import { ORT_WASM_PREFIX } from '../vendor'
 
 const worker = globalThis as unknown as {
   postMessage(message: WorkerResponse, transfer?: Transferable[]): void
@@ -69,11 +70,12 @@ async function loadTransformers(): Promise<TransformersModule> {
       const module = await import('@huggingface/transformers')
       const env = module.env
       // Models come from the Hugging Face hub and are cached by the browser;
-      // the ONNX runtime binaries are self-hosted so COEP stays intact.
+      // the ONNX runtime binaries load from a pinned jsDelivr prefix (they
+      // exceed Cloudflare Pages' 25 MiB per-file limit — see ../vendor.ts).
       env.allowRemoteModels = true
       const wasm = env.backends?.onnx?.wasm
       if (wasm) {
-        wasm.wasmPaths = '/models/onnx/'
+        wasm.wasmPaths = ORT_WASM_PREFIX
         const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4
         wasm.numThreads = Math.max(1, Math.min(4, cores - 1))
       }

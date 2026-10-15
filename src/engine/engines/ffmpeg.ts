@@ -2,8 +2,9 @@
  * FFmpeg engine (video).
  *
  * @ffmpeg/ffmpeg runs the WASM core inside its own worker, so this engine is
- * driven from the main thread and serialised by `createSerialRunner`. Core
- * and wrapper assets are served same-origin from /ffmpeg.
+ * driven from the main thread and serialised by `createSerialRunner`. The
+ * core loader and wrapper are served same-origin from /ffmpeg; the ~31 MB
+ * core wasm comes from a pinned jsDelivr URL (see `../vendor.ts`).
  *
  * Text watermarks and burned-in subtitles are rendered to PNGs on a canvas
  * and composited with `overlay` — the wasm build ships no fonts, and this
@@ -15,6 +16,7 @@
  */
 import { zipSync } from 'fflate'
 import { EngineError } from '../types'
+import { FFMPEG_CORE_WASM_URL } from '../vendor'
 import { mergeAdjacentCues, parseSubtitles, wrapText } from './srt'
 import type { JobInput, JobOutput, JobRequest } from '../types'
 
@@ -42,7 +44,7 @@ async function load(): Promise<FFmpegInstance> {
       ffmpeg.on('log', ({ message }) => log(message))
       await ffmpeg.load({
         coreURL: '/ffmpeg/ffmpeg-core.js',
-        wasmURL: '/ffmpeg/ffmpeg-core.wasm',
+        wasmURL: FFMPEG_CORE_WASM_URL,
         classWorkerURL: '/ffmpeg/ffmpeg-worker.js',
       })
       // Capture the build configuration once — it tells us which libraries

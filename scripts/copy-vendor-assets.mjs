@@ -18,18 +18,12 @@ const COPIES = [
   ['node_modules/wasm-vips/lib/vips.wasm', 'public/wasm/vips.wasm'],
   ['node_modules/wasm-vips/lib/vips-heif.wasm', 'public/wasm/vips-heif.wasm'],
   ['node_modules/wasm-vips/lib/vips-resvg.wasm', 'public/wasm/vips-resvg.wasm'],
-  // ONNX runtime (transformers.js) — self-hosted so COEP stays intact and
-  // models can run offline once cached. All three builds are copied because
-  // the runtime picks one based on WebGPU/threads availability.
-  ['node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs', 'public/models/onnx/ort-wasm-simd-threaded.mjs'],
-  ['node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm', 'public/models/onnx/ort-wasm-simd-threaded.wasm'],
-  ['node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs', 'public/models/onnx/ort-wasm-simd-threaded.asyncify.mjs'],
-  ['node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm', 'public/models/onnx/ort-wasm-simd-threaded.asyncify.wasm'],
-  ['node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs', 'public/models/onnx/ort-wasm-simd-threaded.jsep.mjs'],
-  ['node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm', 'public/models/onnx/ort-wasm-simd-threaded.jsep.wasm'],
-  // FFmpeg core — video engine
+  // ONNX runtime (transformers.js): NOT copied — the runtime loads all of its
+  // builds from a pinned jsDelivr prefix; several exceed Cloudflare Pages'
+  // 25 MiB per-file limit (see src/engine/vendor.ts).
+  // FFmpeg core — video engine. The core wasm is NOT copied either: at ~31 MB
+  // it exceeds the same limit and is served from a pinned jsDelivr URL.
   ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', 'public/ffmpeg/ffmpeg-core.js'],
-  ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', 'public/ffmpeg/ffmpeg-core.wasm'],
   // FFmpeg wrapper worker (spawned by @ffmpeg/ffmpeg with an explicit URL)
   ['node_modules/@ffmpeg/ffmpeg/dist/esm/worker.js', 'public/ffmpeg/ffmpeg-worker.js'],
   ['node_modules/@ffmpeg/ffmpeg/dist/esm/const.js', 'public/ffmpeg/const.js'],
